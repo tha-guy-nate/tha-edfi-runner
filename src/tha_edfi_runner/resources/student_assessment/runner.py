@@ -18,7 +18,10 @@ def _is_401(result: dict[str, Any]) -> bool:
 
 def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str) -> str | None:
     token_url = f"{base_url}/{oauth_endpoint.lstrip('/')}"
-    result = ThaEdfiBase(base_url=base_url, client_id=key, client_secret=secret, token_url=token_url).fetch_token()
+    instance = ThaEdfiBase(
+        base_url=base_url, client_id=key, client_secret=secret, token_url=token_url
+    )
+    result = instance.fetch_token()
     return result["token"] if result["status"] is None else None
 
 
@@ -39,7 +42,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         endpoint: str = ep.STUDENT_ASSESSMENTS,
         commit: bool = False,
     ) -> dict[str, Any]:
-        """POST a single payload to Ed-Fi. Returns {"key", "status", "message"} — no data on success.
+        """POST a single payload to Ed-Fi. Returns {"key", "status", "message"}.
 
         payload may be a dict or a JSON string.
         # TODO: support additional payload types (form data, raw bytes)
@@ -108,14 +111,16 @@ class ThaStudentAssessment(ThaEdfiBase):
             if not row_token:
                 return idx, {"key": key_val, "status": "error", "message": f"missing {token_col!r}"}
             if raw is None:
-                return idx, {"key": key_val, "status": "error", "message": f"missing column: {payload_col!r}"}
+                msg = f"missing column: {payload_col!r}"
+                return idx, {"key": key_val, "status": "error", "message": msg}
 
             # TODO: support additional payload types (form data, raw bytes)
             if isinstance(raw, str):
                 try:
                     payload: dict[str, Any] = json.loads(raw)
                 except (json.JSONDecodeError, TypeError) as exc:
-                    return idx, {"key": key_val, "status": "error", "message": f"invalid JSON: {exc}"}
+                    msg = f"invalid JSON: {exc}"
+                    return idx, {"key": key_val, "status": "error", "message": msg}
             else:
                 payload = raw
 
@@ -123,7 +128,9 @@ class ThaStudentAssessment(ThaEdfiBase):
             effective_api_version = row_api_version or self.api_version
             auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
             auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret)
+            can_reauth = bool(
+                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            )
 
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
@@ -132,22 +139,33 @@ class ThaStudentAssessment(ThaEdfiBase):
                     if fresh:
                         row_token = fresh
 
-            instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version)
+            instance = ThaStudentAssessment(
+                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+            )
             result = instance.post_payload(payload, key=key_val, endpoint=endpoint, commit=True)
 
             if can_reauth and _is_401(result):
                 fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
                 if fresh:
-                    instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version)
-                    result = instance.post_payload(payload, key=key_val, endpoint=endpoint, commit=True)
+                    instance = ThaStudentAssessment(
+                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                    )
+                    result = instance.post_payload(
+                        payload, key=key_val, endpoint=endpoint, commit=True
+                    )
 
             return idx, result
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
-                tqdm(as_completed(futures), total=len(futures), desc=progress_desc or "posting payloads")
-                if show_progress else as_completed(futures)
+                tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=progress_desc or "posting payloads",
+                )
+                if show_progress
+                else as_completed(futures)
             )
             for future in futures_iter:
                 idx, out = future.result()
@@ -164,11 +182,13 @@ class ThaStudentAssessment(ThaEdfiBase):
     ) -> dict[str, Any]:
         """Fetch a single student assessment by Ed-Fi resource ID."""
         session = self._session()
-        result = api.get_student_assessment_by_id(self._req, session, self._data_url, endpoint, resource_id)
+        result = api.get_student_assessment_by_id(
+            self._req, session, self._data_url, endpoint, resource_id
+        )
         if result["code"] == 404:
             return {"id": resource_id, "status": "error", "message": "not found", "data": None}
         if result["status"] == "error":
-            return {"id": resource_id, "status": "error", "message": _error_msg(result), "data": None}
+            return {"id": resource_id, "status": "error", "message": _error_msg(result), "data": None}  # noqa: E501
         return {"id": resource_id, "status": None, "message": None, "data": result["data"]}
 
     def batch_get_by_id(
@@ -199,19 +219,24 @@ class ThaStudentAssessment(ThaEdfiBase):
         def _get(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
             if not resource_id:
-                return idx, {"id": None, "status": "error", "message": f"missing column: {id_col!r}", "data": None}
+                msg = f"missing column: {id_col!r}"
+                return idx, {"id": None, "status": "error", "message": msg, "data": None}
             row_base_url = (row.get(url_col) or "").rstrip("/")
             row_token = (row.get(token_col) or "").strip()
             if not row_base_url:
-                return idx, {"id": resource_id, "status": "error", "message": f"missing {url_col!r}", "data": None}
+                msg = f"missing {url_col!r}"
+                return idx, {"id": resource_id, "status": "error", "message": msg, "data": None}
             if not row_token:
-                return idx, {"id": resource_id, "status": "error", "message": f"missing {token_col!r}", "data": None}
+                msg = f"missing {token_col!r}"
+                return idx, {"id": resource_id, "status": "error", "message": msg, "data": None}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
             effective_api_version = row_api_version or self.api_version
             auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
             auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret)
+            can_reauth = bool(
+                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            )
 
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
@@ -220,13 +245,17 @@ class ThaStudentAssessment(ThaEdfiBase):
                     if fresh:
                         row_token = fresh
 
-            instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version)
+            instance = ThaStudentAssessment(
+                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+            )
             result = instance.get_by_id(resource_id, endpoint=endpoint)
 
             if can_reauth and _is_401(result):
                 fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
                 if fresh:
-                    instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version)
+                    instance = ThaStudentAssessment(
+                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                    )
                     result = instance.get_by_id(resource_id, endpoint=endpoint)
 
             return idx, result
@@ -234,8 +263,13 @@ class ThaStudentAssessment(ThaEdfiBase):
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
-                tqdm(as_completed(futures), total=len(futures), desc=progress_desc or "fetching by id")
-                if show_progress else as_completed(futures)
+                tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=progress_desc or "fetching by id",
+                )
+                if show_progress
+                else as_completed(futures)
             )
             for future in futures_iter:
                 idx, out = future.result()
@@ -262,7 +296,11 @@ class ThaStudentAssessment(ThaEdfiBase):
         all_items: list[dict[str, Any]] = []
         offset = 0
 
-        progress = tqdm(desc=progress_desc or "fetching student assessments", unit=" items") if show_progress else None
+        progress = (
+            tqdm(desc=progress_desc or "fetching student assessments", unit=" items")
+            if show_progress
+            else None
+        )
 
         while True:
             session = self._session()
@@ -313,9 +351,10 @@ class ThaStudentAssessment(ThaEdfiBase):
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch all student assessments across multiple accounts, returning a flat list with key_col injected.
+        """Fetch all student assessments across multiple accounts, returning a flat list.
 
-        Deduplicates rows by key_col value. Pass results as source to expand_rows to join back to rows.
+        Injects key_col into each record. Deduplicates by key_col. Pass results as source
+        to expand_rows to join back to rows.
         Error accounts contribute a single {key_col, status, message} placeholder to the flat list.
         """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
@@ -336,15 +375,19 @@ class ThaStudentAssessment(ThaEdfiBase):
             row_base_url = (row.get(url_col) or "").rstrip("/")
             row_token = (row.get(token_col) or "").strip()
             if not row_base_url:
-                return idx, {"key": key_val, "status": "error", "message": f"missing {url_col!r}", "data": None}
+                msg = f"missing {url_col!r}"
+                return idx, {"key": key_val, "status": "error", "message": msg, "data": None}
             if not row_token:
-                return idx, {"key": key_val, "status": "error", "message": f"missing {token_col!r}", "data": None}
+                msg = f"missing {token_col!r}"
+                return idx, {"key": key_val, "status": "error", "message": msg, "data": None}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
             effective_api_version = row_api_version or self.api_version
             auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
             auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret)
+            can_reauth = bool(
+                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            )
 
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
@@ -353,22 +396,33 @@ class ThaStudentAssessment(ThaEdfiBase):
                     if fresh:
                         row_token = fresh
 
-            instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version)
+            instance = ThaStudentAssessment(
+                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+            )
             result = instance.get_all(key=key_val, endpoint=endpoint, params=params, limit=limit)
 
             if can_reauth and _is_401(result):
                 fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
                 if fresh:
-                    instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version)
-                    result = instance.get_all(key=key_val, endpoint=endpoint, params=params, limit=limit)
+                    instance = ThaStudentAssessment(
+                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                    )
+                    result = instance.get_all(
+                        key=key_val, endpoint=endpoint, params=params, limit=limit
+                    )
 
             return idx, result
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
             futures_iter = (
-                tqdm(as_completed(futures), total=len(futures), desc=progress_desc or "fetching all student assessments")
-                if show_progress else as_completed(futures)
+                tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=progress_desc or "fetching all student assessments",
+                )
+                if show_progress
+                else as_completed(futures)
             )
             for future in futures_iter:
                 idx, out = future.result()
@@ -399,7 +453,9 @@ class ThaStudentAssessment(ThaEdfiBase):
         if not commit:
             return {"id": resource_id, "key": key, "status": "dry_run", "message": None}
         session = self._session()
-        result = api.delete_student_assessment(self._req, session, self._data_url, endpoint, resource_id)
+        result = api.delete_student_assessment(
+            self._req, session, self._data_url, endpoint, resource_id
+        )
         if result["status"] == "error":
             msg = result["message"] or f"HTTP {result['code']}"
             return {"id": resource_id, "key": key, "status": "error", "message": msg}
@@ -449,19 +505,24 @@ class ThaStudentAssessment(ThaEdfiBase):
             resource_id = str(row.get(id_col) or "").strip()
             key_val = str(row.get(key_col) or "").strip()
             if not resource_id:
-                return idx, {"id": None, "key": key_val, "status": "error", "message": f"missing column: {id_col!r}"}
+                msg = f"missing column: {id_col!r}"
+                return idx, {"id": None, "key": key_val, "status": "error", "message": msg}
             row_base_url = (row.get(url_col) or "").rstrip("/")
             row_token = (row.get(token_col) or "").strip()
             if not row_base_url:
-                return idx, {"id": resource_id, "key": key_val, "status": "error", "message": f"missing {url_col!r}"}
+                msg = f"missing {url_col!r}"
+                return idx, {"id": resource_id, "key": key_val, "status": "error", "message": msg}
             if not row_token:
-                return idx, {"id": resource_id, "key": key_val, "status": "error", "message": f"missing {token_col!r}"}
+                msg = f"missing {token_col!r}"
+                return idx, {"id": resource_id, "key": key_val, "status": "error", "message": msg}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
             effective_api_version = row_api_version or self.api_version
             auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
             auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret)
+            can_reauth = bool(
+                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            )
 
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
@@ -470,22 +531,33 @@ class ThaStudentAssessment(ThaEdfiBase):
                     if fresh:
                         row_token = fresh
 
-            instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version)
+            instance = ThaStudentAssessment(
+                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+            )
             result = instance.delete_by_id(resource_id, key=key_val, endpoint=endpoint, commit=True)
 
             if can_reauth and _is_401(result):
                 fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
                 if fresh:
-                    instance = ThaStudentAssessment(base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version)
-                    result = instance.delete_by_id(resource_id, key=key_val, endpoint=endpoint, commit=True)
+                    instance = ThaStudentAssessment(
+                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                    )
+                    result = instance.delete_by_id(
+                        resource_id, key=key_val, endpoint=endpoint, commit=True
+                    )
 
             return idx, result
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
-                tqdm(as_completed(futures), total=len(futures), desc=progress_desc or "deleting by id")
-                if show_progress else as_completed(futures)
+                tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=progress_desc or "deleting by id",
+                )
+                if show_progress
+                else as_completed(futures)
             )
             for future in futures_iter:
                 idx, out = future.result()

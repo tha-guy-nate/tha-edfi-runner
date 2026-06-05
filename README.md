@@ -120,7 +120,7 @@ flat_assessments = runner.batch_get_all(
 enriched = mapper.expand_rows(
     district_rows,
     source=flat_assessments,
-    mapping={"Assessment ID": "id", "Score": "scoreResults[0].result"},
+    mapping={"Assessment ID": "id", "Score": "scoreResults.result"},
     row_key="District BK",
     source_key="District BK",
 )

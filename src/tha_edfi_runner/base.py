@@ -3,8 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from tqdm import tqdm
 from tha_req_runner.runner import ThaReq
+from tqdm import tqdm
 
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
 from tha_edfi_runner.errors import EdfiError
@@ -30,7 +30,9 @@ class ThaEdfiBase:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_version = api_version.strip("/")
-        self._data_url = f"{self.base_url}/data/{self.api_version}" if self.api_version else self.base_url
+        self._data_url = (
+            f"{self.base_url}/data/{self.api_version}" if self.api_version else self.base_url
+        )
         self._req = ThaReq()
         self._auth: OAuth2Auth | BearerAuth | None = None
 
@@ -150,8 +152,13 @@ class ThaEdfiBase:
                 pool.submit(_fetch_one, idx, row): idx for idx, row in enumerate(deduped)
             }
             futures_iter = (
-                tqdm(as_completed(futures), total=len(futures), desc=progress_desc or "fetching tokens")
-                if show_progress else as_completed(futures)
+                tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=progress_desc or "fetching tokens",
+                )
+                if show_progress
+                else as_completed(futures)
             )
             for future in futures_iter:
                 idx, out = future.result()

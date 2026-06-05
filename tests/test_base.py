@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
 from tha_edfi_runner.base import ThaEdfiBase
@@ -78,7 +79,7 @@ def test_fetch_token_no_auth_returns_error():
 
 def test_fetch_token_401_returns_auth_error():
     base = ThaEdfiBase(base_url=BASE_URL, client_id="id", client_secret="secret")
-    with patch.object(base._auth, "get_token", side_effect=EdfiError("token fetch failed (code 401)")):
+    with patch.object(base._auth, "get_token", side_effect=EdfiError("token fetch failed (code 401)")):  # noqa: E501
         result = base.fetch_token()
     assert result["status"] == "error"
     assert result["message"] == "auth error: HTTP 401"
@@ -125,7 +126,9 @@ def test_batch_fetch_tokens_success():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "fresh_token"
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert len(result) == 1
     assert result[0]["EdFi Token"] == "fresh_token"
     assert result[0]["row status"] is None
@@ -136,7 +139,9 @@ def test_batch_fetch_tokens_returns_account_creds_token():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "tok"
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     record = result[0]
     assert record["District BK"] == "100"
     assert record["oAuthKey"] == KEY
@@ -148,7 +153,9 @@ def test_batch_fetch_tokens_deduplicates_by_account():
     rows = [_make_auth_row("100"), _make_auth_row("100"), _make_auth_row("200")]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "tok"
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert len(result) == 2
     assert MockOAuth.call_count == 2
 
@@ -161,7 +168,9 @@ def test_batch_fetch_tokens_skips_error_warning_by_default():
     ]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "tok"
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert len(result) == 1
     assert result[0]["District BK"] == "300"
 
@@ -169,7 +178,9 @@ def test_batch_fetch_tokens_skips_error_warning_by_default():
 def test_batch_fetch_tokens_missing_url_sets_error():
     rows = [_make_auth_row(url="")]
     with patch("tha_edfi_runner.base.OAuth2Auth"):
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert "targetUrl" in result[0]["message"]
     assert result[0]["EdFi Token"] is None
@@ -178,7 +189,9 @@ def test_batch_fetch_tokens_missing_url_sets_error():
 def test_batch_fetch_tokens_missing_key_sets_error():
     rows = [_make_auth_row(key="")]
     with patch("tha_edfi_runner.base.OAuth2Auth"):
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert "oAuthKey" in result[0]["message"]
 
@@ -186,7 +199,9 @@ def test_batch_fetch_tokens_missing_key_sets_error():
 def test_batch_fetch_tokens_missing_secret_sets_error():
     rows = [_make_auth_row(secret="")]
     with patch("tha_edfi_runner.base.OAuth2Auth"):
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert "oAuthSecret" in result[0]["message"]
 
@@ -195,7 +210,9 @@ def test_batch_fetch_tokens_401_sets_auth_error_message():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.side_effect = EdfiError("token fetch failed (code 401)")
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert result[0]["message"] == "auth error: HTTP 401"
 
@@ -203,8 +220,12 @@ def test_batch_fetch_tokens_401_sets_auth_error_message():
 def test_batch_fetch_tokens_edfi_error_non_401():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
-        MockOAuth.return_value.get_token.side_effect = EdfiError("OAuth2 token fetch failed: timeout")
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        MockOAuth.return_value.get_token.side_effect = EdfiError(
+            "OAuth2 token fetch failed: timeout"
+        )
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert "timeout" in result[0]["message"]
 
@@ -213,7 +234,9 @@ def test_batch_fetch_tokens_unexpected_exception():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.side_effect = RuntimeError("connection refused")
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert result[0]["row status"] == "error"
     assert "auth failed" in result[0]["message"]
 
@@ -222,14 +245,18 @@ def test_batch_fetch_tokens_includes_expires_col():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "tok"
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert "token_expires_at" in result[0]
 
 
 def test_batch_fetch_tokens_error_rows_include_expires_col():
     rows = [_make_auth_row(url="")]
     with patch("tha_edfi_runner.base.OAuth2Auth"):
-        result = _make_base().batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = _make_base().batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert "token_expires_at" in result[0]
     assert result[0]["token_expires_at"] is None
 
@@ -256,5 +283,7 @@ def test_batch_fetch_tokens_sets_self_rows():
     rows = [_make_auth_row()]
     with patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth:
         MockOAuth.return_value.get_token.return_value = "tok"
-        result = base.batch_fetch_tokens(rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK")
+        result = base.batch_fetch_tokens(
+            rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
+        )
     assert base.rows is result
