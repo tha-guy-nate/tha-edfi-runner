@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, cast
 
 from tqdm import tqdm
 
@@ -16,7 +16,9 @@ def _is_401(result: dict[str, Any]) -> bool:
     return result.get("status") == "error" and "401" in str(result.get("message", ""))
 
 
-def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str) -> str | None:
+def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str | None) -> str | None:
+    if not oauth_endpoint:
+        return None
     token_url = f"{base_url}/{oauth_endpoint.lstrip('/')}"
     instance = ThaEdfiBase(
         base_url=base_url, client_id=key, client_secret=secret, token_url=token_url
@@ -49,13 +51,18 @@ class ThaStudentAssessment(ThaEdfiBase):
         """
         if not commit:
             return {"key": key, "status": "dry_run", "message": None}
+        parsed_payload: dict[str, Any]
         if isinstance(payload, str):
             try:
-                payload = json.loads(payload)
+                parsed_payload = json.loads(payload)
             except (json.JSONDecodeError, TypeError) as exc:
                 return {"key": key, "status": "error", "message": f"invalid JSON: {exc}"}
+        else:
+            parsed_payload = payload
         session = self._session()
-        result = api.post_student_assessment(self._req, session, self._data_url, endpoint, payload)
+        result = api.post_student_assessment(
+            self._req, session, self._data_url, endpoint, parsed_payload
+        )
         if result["status"] == "error":
             msg = _error_msg(result)
             if result.get("code") != 401 and isinstance(result.get("data"), dict):
@@ -98,7 +105,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             self.rows = out
             return out
 
-        results: list[dict[str, Any]] = [{}] * len(valid_rows)
+        results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
 
         def _post(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             key_val = str(row.get(key_col) or "").strip()
@@ -168,8 +175,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = future.result()
-                results[idx] = out
+                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
+                results[idx] = out  # type: ignore[call-overload]
 
         self.rows = results
         return results
@@ -214,7 +221,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
-        results: list[dict[str, Any]] = [{}] * len(valid_rows)
+        results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
 
         def _get(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -272,8 +279,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = future.result()
-                results[idx] = out
+                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
+                results[idx] = out  # type: ignore[call-overload]
 
         self.rows = results
         return results
@@ -368,7 +375,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 seen.add(key_val)
                 deduped.append(row)
 
-        account_results: list[dict[str, Any]] = [{}] * len(deduped)
+        account_results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(deduped))
 
         def _fetch(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             key_val = str(row.get(key_col) or "").strip()
@@ -499,7 +506,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             self.rows = out
             return out
 
-        results: list[dict[str, Any]] = [{}] * len(valid_rows)
+        results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
 
         def _delete(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -560,8 +567,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = future.result()
-                results[idx] = out
+                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
+                results[idx] = out  # type: ignore[call-overload]
 
         self.rows = results
         return results
