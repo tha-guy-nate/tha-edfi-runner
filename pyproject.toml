@@ -24,7 +24,7 @@ classifiers = [
 keywords = ["edfi", "ed-fi", "ods", "education", "api", "tabular", "helper"]
 dependencies = [
     "tha-req-runner>=0.2.2",
-    "tqdm>=4.65",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

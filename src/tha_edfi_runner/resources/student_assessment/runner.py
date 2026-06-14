@@ -163,13 +163,14 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
+        _label = f"{progress_desc}: posting payloads" if progress_desc else "posting payloads"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
                 tqdm(
                     as_completed(futures),
                     total=len(futures),
-                    desc=progress_desc or "posting payloads",
+                    desc=_label,
                 )
                 if show_progress
                 else as_completed(futures)
@@ -267,13 +268,14 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
+        _label = f"{progress_desc}: fetching by id" if progress_desc else "fetching by id"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
                 tqdm(
                     as_completed(futures),
                     total=len(futures),
-                    desc=progress_desc or "fetching by id",
+                    desc=_label,
                 )
                 if show_progress
                 else as_completed(futures)
@@ -303,8 +305,10 @@ class ThaStudentAssessment(ThaEdfiBase):
         all_items: list[dict[str, Any]] = []
         offset = 0
 
+        _action = "fetching student assessments"
+        _label = f"{progress_desc}: {_action}" if progress_desc else _action
         progress = (
-            tqdm(desc=progress_desc or "fetching student assessments", unit=" items")
+            tqdm(desc=_label, unit=" items")
             if show_progress
             else None
         )
@@ -420,13 +424,15 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
+        _action = "fetching all student assessments"
+        _label = f"{progress_desc}: {_action}" if progress_desc else _action
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
             futures_iter = (
                 tqdm(
                     as_completed(futures),
                     total=len(futures),
-                    desc=progress_desc or "fetching all student assessments",
+                    desc=_label,
                 )
                 if show_progress
                 else as_completed(futures)
@@ -555,13 +561,14 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
+        _label = f"{progress_desc}: deleting by id" if progress_desc else "deleting by id"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
                 tqdm(
                     as_completed(futures),
                     total=len(futures),
-                    desc=progress_desc or "deleting by id",
+                    desc=_label,
                 )
                 if show_progress
                 else as_completed(futures)
