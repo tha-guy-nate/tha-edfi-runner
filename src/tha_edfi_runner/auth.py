@@ -72,9 +72,7 @@ class BasicAuth:
     """Username/password basic auth — placeholder, not yet implemented."""
 
     def __init__(self, *, username: str, password: str) -> None:
-        raise NotImplementedError(
-            "BasicAuth is not yet implemented. Use OAuth2Auth or BearerAuth."
-        )
+        raise NotImplementedError("BasicAuth is not yet implemented. Use OAuth2Auth or BearerAuth.")
 
     def get_token(self) -> str:  # pragma: no cover
         raise NotImplementedError

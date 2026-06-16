@@ -65,8 +65,11 @@ def test_oauth2_refreshes_expired_token():
 def test_oauth2_raises_on_error_response():
     auth = _make_oauth()
     err = {
-        "status": "error", "code": 401, "data": None,
-        "message": "Unauthorized", "raw_response": None,
+        "status": "error",
+        "code": 401,
+        "data": None,
+        "message": "Unauthorized",
+        "raw_response": None,
     }
     with patch.object(auth._req, "safe_call", return_value=err):
         with pytest.raises(EdfiError, match="OAuth2 token fetch failed"):

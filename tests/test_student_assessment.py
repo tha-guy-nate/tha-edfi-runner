@@ -24,6 +24,7 @@ def _err(code=400, message="bad request", data=None):
 
 # --- post_payload (single) ---
 
+
 def test_post_payload_dry_run():
     runner = make_runner()
     result = runner.post_payload({"studentAssessmentIdentifier": "A1"}, key="dist-1", commit=False)
@@ -83,6 +84,7 @@ def test_post_payload_401_message():
 
 # --- batch_post_payload ---
 
+
 def _make_post_row(key="dist-1", url=BASE_URL, token=TOKEN, payload=None, status=""):
     return {
         "row status": status,
@@ -119,11 +121,13 @@ def test_batch_post_payload_success():
     rows = [_make_post_row("dist-1")]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.post_payload.return_value = {
-            "key": "dist-1", "status": None, "message": None
+            "key": "dist-1",
+            "status": None,
+            "message": None,
         }
         result = runner.batch_post_payload(
-        rows, payload_col="payload", key_col="District BK", commit=True
-    )
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
     assert result[0] == {"key": "dist-1", "status": None, "message": None}
 
 
@@ -176,11 +180,13 @@ def test_batch_post_payload_skip_statuses_default():
     ]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.post_payload.return_value = {
-            "key": "dist-3", "status": None, "message": None
+            "key": "dist-3",
+            "status": None,
+            "message": None,
         }
         result = runner.batch_post_payload(
-        rows, payload_col="payload", key_col="District BK", commit=True
-    )
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
     assert len(result) == 1
     assert result[0]["key"] == "dist-3"
 
@@ -190,15 +196,18 @@ def test_batch_post_payload_sets_self_rows():
     rows = [_make_post_row()]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.post_payload.return_value = {
-            "key": "dist-1", "status": None, "message": None
+            "key": "dist-1",
+            "status": None,
+            "message": None,
         }
         result = runner.batch_post_payload(
-        rows, payload_col="payload", key_col="District BK", commit=True
-    )
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
     assert runner.rows is result
 
 
 # --- get_by_id ---
+
 
 def test_get_by_id_returns_data():
     runner = make_runner()
@@ -233,6 +242,7 @@ def test_get_by_id_returns_error_on_other_error():
 
 # --- batch_get_by_id ---
 
+
 def _make_get_row(resource_id="rid-1", url=BASE_URL, token=TOKEN, status=""):
     return {"row status": status, "id": resource_id, "targetUrl": url, "EdFi Token": token}
 
@@ -243,7 +253,10 @@ def test_batch_get_by_id_success():
     resource = {"id": "rid-1", "studentAssessmentIdentifier": "A1"}
     with patch(PATCH_RUNNER) as MockRunner:
         MockRunner.return_value.get_by_id.return_value = {
-            "id": "rid-1", "status": None, "message": None, "data": resource
+            "id": "rid-1",
+            "status": None,
+            "message": None,
+            "data": resource,
         }
         result = runner.batch_get_by_id(rows, id_col="id")
     assert result[0]["status"] is None
@@ -256,7 +269,10 @@ def test_batch_get_by_id_404():
     rows = [_make_get_row("missing")]
     with patch(PATCH_RUNNER) as MockRunner:
         MockRunner.return_value.get_by_id.return_value = {
-            "id": "missing", "status": "error", "message": "not found", "data": None
+            "id": "missing",
+            "status": "error",
+            "message": "not found",
+            "data": None,
         }
         result = runner.batch_get_by_id(rows, id_col="id")
     assert result[0]["status"] == "error"
@@ -298,7 +314,10 @@ def test_batch_get_by_id_skips_error_warning():
     ]
     with patch(PATCH_RUNNER) as MockRunner:
         MockRunner.return_value.get_by_id.return_value = {
-            "id": "rid-3", "status": None, "message": None, "data": {}
+            "id": "rid-3",
+            "status": None,
+            "message": None,
+            "data": {},
         }
         result = runner.batch_get_by_id(rows, id_col="id")
     assert len(result) == 1
@@ -310,7 +329,10 @@ def test_batch_get_by_id_custom_col_names():
     rows = [{"row status": "", "rid": "abc", "url": BASE_URL, "tok": TOKEN}]
     with patch(PATCH_RUNNER) as MockRunner:
         MockRunner.return_value.get_by_id.return_value = {
-            "id": "abc", "status": None, "message": None, "data": {}
+            "id": "abc",
+            "status": None,
+            "message": None,
+            "data": {},
         }
         result = runner.batch_get_by_id(rows, id_col="rid", url_col="url", token_col="tok")
     assert result[0]["status"] is None
@@ -321,13 +343,17 @@ def test_batch_get_by_id_sets_self_rows():
     rows = [_make_get_row()]
     with patch(PATCH_RUNNER) as MockRunner:
         MockRunner.return_value.get_by_id.return_value = {
-            "id": "rid-1", "status": None, "message": None, "data": {}
+            "id": "rid-1",
+            "status": None,
+            "message": None,
+            "data": {},
         }
         result = runner.batch_get_by_id(rows, id_col="id")
     assert runner.rows is result
 
 
 # --- get_all ---
+
 
 def test_get_all_returns_normalized_shape():
     runner = make_runner()
@@ -396,6 +422,7 @@ def _batch_row(key_val="100", url=BASE_URL, token=TOKEN, status=""):
 
 # --- batch_get_all ---
 
+
 def test_batch_get_all_returns_flat_list():
     runner = make_runner()
     rows = [_batch_row("100")]
@@ -421,7 +448,9 @@ def test_batch_get_all_multiple_accounts_flat():
     rows = [_batch_row("100"), _batch_row("200", url="https://other.example.com/api")]
     mock_instances = [
         type("M", (), {"get_all": lambda self, **kw: _get_all_ok("100", [{"id": "a"}])})(),
-        type("M", (), {"get_all": lambda self, **kw: _get_all_ok("200", [{"id": "b"}, {"id": "c"}])})(),  # noqa: E501
+        type(
+            "M", (), {"get_all": lambda self, **kw: _get_all_ok("200", [{"id": "b"}, {"id": "c"}])}
+        )(),
     ]
     with patch(PATCH_RUNNER, side_effect=mock_instances):
         result = runner.batch_get_all(rows, key_col="District BK")
@@ -500,6 +529,7 @@ def test_batch_get_all_custom_col_names():
 
 # --- delete_by_id ---
 
+
 def test_delete_by_id_dry_run():
     runner = make_runner()
     result = runner.delete_by_id("abc-123", key="dist-1", commit=False)
@@ -527,6 +557,7 @@ def test_delete_by_id_error():
 
 
 # --- batch_delete_by_id ---
+
 
 def _make_delete_row(resource_id="rid-1", key="dist-1", url=BASE_URL, token=TOKEN, status=""):
     return {
@@ -561,7 +592,10 @@ def test_batch_delete_by_id_success():
     rows = [_make_delete_row("rid-1", "dist-1")]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-1", "key": "dist-1", "status": "deleted", "message": None
+            "id": "rid-1",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", commit=True
@@ -576,7 +610,10 @@ def test_batch_delete_by_id_api_error():
     rows = [_make_delete_row()]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-1", "key": "dist-1", "status": "error", "message": "not found"
+            "id": "rid-1",
+            "key": "dist-1",
+            "status": "error",
+            "message": "not found",
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", commit=True
@@ -628,7 +665,10 @@ def test_batch_delete_by_id_skip_statuses_default():
     ]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-3", "key": "dist-1", "status": "deleted", "message": None
+            "id": "rid-3",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", commit=True
@@ -645,7 +685,10 @@ def test_batch_delete_by_id_skip_statuses_custom():
     ]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-2", "key": "dist-1", "status": "deleted", "message": None
+            "id": "rid-2",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", skip_statuses=["pending"], commit=True
@@ -662,7 +705,10 @@ def test_batch_delete_by_id_skip_statuses_empty_disables():
     ]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "x", "key": "dist-1", "status": "deleted", "message": None
+            "id": "x",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", skip_statuses=[], commit=True
@@ -675,7 +721,10 @@ def test_batch_delete_by_id_sets_self_rows():
     rows = [_make_delete_row()]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-1", "key": "dist-1", "status": "deleted", "message": None
+            "id": "rid-1",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         result = runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", commit=True
@@ -696,6 +745,7 @@ def _with_creds(row: dict) -> dict:
 
 # batch_get_by_id
 
+
 def test_batch_get_by_id_401_retries_and_succeeds():
     runner = make_runner()
     rows = [_with_creds(_make_get_row())]
@@ -704,8 +754,11 @@ def test_batch_get_by_id_401_retries_and_succeeds():
     with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
         MockCls.return_value.get_by_id.side_effect = [fail, ok]
         result = runner.batch_get_by_id(
-            rows, id_col="id",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret", oauth_endpoint=OAUTH_EP,
+            rows,
+            id_col="id",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
         )
     assert result[0]["status"] is None
 
@@ -717,8 +770,11 @@ def test_batch_get_by_id_401_retry_still_fails():
     with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
         MockCls.return_value.get_by_id.return_value = fail
         result = runner.batch_get_by_id(
-            rows, id_col="id",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret", oauth_endpoint=OAUTH_EP,
+            rows,
+            id_col="id",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
         )
     assert result[0]["status"] == "error"
     assert "401" in result[0]["message"]
@@ -738,17 +794,24 @@ def test_batch_get_by_id_expired_token_proactive_refresh():
     runner = make_runner()
     rows = [_with_creds({**_make_get_row(), "token_expires_at": time.time() - 10})]
     ok = {"id": "rid-1", "status": None, "message": None, "data": {}}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch:  # noqa: E501
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+    ):
         MockCls.return_value.get_by_id.return_value = ok
         runner.batch_get_by_id(
-            rows, id_col="id",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret",
-            oauth_endpoint=OAUTH_EP, expires_col="token_expires_at",
+            rows,
+            id_col="id",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
+            expires_col="token_expires_at",
         )
     mock_refetch.assert_called_once()
 
 
 # api_version_col
+
 
 def test_batch_get_by_id_uses_row_api_version():
     runner = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN, api_version="v3")
@@ -787,7 +850,9 @@ def test_batch_post_payload_uses_row_api_version():
     rows = [{**_make_post_row(), "apiVer": "v5"}]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.post_payload.return_value = {
-            "key": "dist-1", "status": None, "message": None
+            "key": "dist-1",
+            "status": None,
+            "message": None,
         }
         runner.batch_post_payload(
             rows,
@@ -805,7 +870,10 @@ def test_batch_delete_by_id_uses_row_api_version():
     rows = [{**_make_delete_row(), "apiVer": "v5"}]
     with patch(PATCH_RUNNER) as MockCls:
         MockCls.return_value.delete_by_id.return_value = {
-            "id": "rid-1", "key": "dist-1", "status": "deleted", "message": None
+            "id": "rid-1",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
         }
         runner.batch_delete_by_id(
             rows, id_col="edfi_id", key_col="District BK", api_version_col="apiVer", commit=True
@@ -816,6 +884,7 @@ def test_batch_delete_by_id_uses_row_api_version():
 
 # batch_get_all
 
+
 def test_batch_get_all_401_retries_and_succeeds():
     runner = make_runner()
     rows = [_with_creds(_batch_row())]
@@ -824,14 +893,18 @@ def test_batch_get_all_401_retries_and_succeeds():
     with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
         MockCls.return_value.get_all.side_effect = [fail, ok]
         result = runner.batch_get_all(
-            rows, key_col="District BK",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret", oauth_endpoint=OAUTH_EP,
+            rows,
+            key_col="District BK",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
         )
     assert result[0]["District BK"] == "100"
     assert "status" not in result[0] or result[0].get("status") != "error"
 
 
 # batch_post_payload
+
 
 def test_batch_post_payload_401_retries_and_succeeds():
     runner = make_runner()
@@ -841,14 +914,19 @@ def test_batch_post_payload_401_retries_and_succeeds():
     with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
         MockCls.return_value.post_payload.side_effect = [fail, ok]
         result = runner.batch_post_payload(
-            rows, payload_col="payload", key_col="District BK",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret", oauth_endpoint=OAUTH_EP,
+            rows,
+            payload_col="payload",
+            key_col="District BK",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
             commit=True,
         )
     assert result[0]["status"] is None
 
 
 # batch_delete_by_id
+
 
 def test_batch_delete_by_id_401_retries_and_succeeds():
     runner = make_runner()
@@ -858,8 +936,12 @@ def test_batch_delete_by_id_401_retries_and_succeeds():
     with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
         MockCls.return_value.delete_by_id.side_effect = [fail, ok]
         result = runner.batch_delete_by_id(
-            rows, id_col="edfi_id", key_col="District BK",
-            auth_key_col="oAuthKey", auth_secret_col="oAuthSecret", oauth_endpoint=OAUTH_EP,
+            rows,
+            id_col="edfi_id",
+            key_col="District BK",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
             commit=True,
         )
     assert result[0]["status"] == "deleted"

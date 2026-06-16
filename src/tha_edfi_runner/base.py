@@ -122,14 +122,29 @@ class ThaEdfiBase:
             base: dict[str, Any] = {account_col: account_val, key_col: key, secret_col: secret}
 
             if not base_url:
-                return idx, {**base, token_col: None, expires_col: None, status_col: "error",
-                             "message": f"missing {url_col!r}"}
+                return idx, {
+                    **base,
+                    token_col: None,
+                    expires_col: None,
+                    status_col: "error",
+                    "message": f"missing {url_col!r}",
+                }
             if not key:
-                return idx, {**base, token_col: None, expires_col: None, status_col: "error",
-                             "message": f"missing {key_col!r}"}
+                return idx, {
+                    **base,
+                    token_col: None,
+                    expires_col: None,
+                    status_col: "error",
+                    "message": f"missing {key_col!r}",
+                }
             if not secret:
-                return idx, {**base, token_col: None, expires_col: None, status_col: "error",
-                             "message": f"missing {secret_col!r}"}
+                return idx, {
+                    **base,
+                    token_col: None,
+                    expires_col: None,
+                    status_col: "error",
+                    "message": f"missing {secret_col!r}",
+                }
 
             token_url = f"{base_url}/{oauth_endpoint.lstrip('/')}"
             instance = ThaEdfiBase(
@@ -140,17 +155,25 @@ class ThaEdfiBase:
             )
             result = instance.fetch_token()
             if result["status"] == "error":
-                return idx, {**base, token_col: None, expires_col: None, status_col: "error",
-                             "message": result["message"]}
+                return idx, {
+                    **base,
+                    token_col: None,
+                    expires_col: None,
+                    status_col: "error",
+                    "message": result["message"],
+                }
             _exp = getattr(instance._auth, "expires_at", None)
             exp_val: float | None = _exp if isinstance(_exp, float) else None
-            return idx, {**base, token_col: result["token"], expires_col: exp_val,
-                         status_col: None, "message": None}
+            return idx, {
+                **base,
+                token_col: result["token"],
+                expires_col: exp_val,
+                status_col: None,
+                "message": None,
+            }
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_fetch_one, idx, row): idx for idx, row in enumerate(deduped)
-            }
+            futures = {pool.submit(_fetch_one, idx, row): idx for idx, row in enumerate(deduped)}
             futures_iter = (
                 tqdm(
                     as_completed(futures),

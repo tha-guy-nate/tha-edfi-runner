@@ -27,7 +27,9 @@ def test_oauth2_default_token_url():
 
 def test_oauth2_custom_token_url():
     base = ThaEdfiBase(
-        base_url=BASE_URL, client_id="id", client_secret="secret",
+        base_url=BASE_URL,
+        client_id="id",
+        client_secret="secret",
         token_url="https://auth.example.com/token",
     )
     assert base._auth._token_url == "https://auth.example.com/token"
@@ -36,7 +38,6 @@ def test_oauth2_custom_token_url():
 def test_no_auth_construction_succeeds():
     base = ThaEdfiBase(base_url=BASE_URL)
     assert base._auth is None
-
 
 
 def test_no_auth_session_raises():
@@ -63,6 +64,7 @@ def test_session_stamps_auth_header():
 
 # --- fetch_token (single) ---
 
+
 def test_fetch_token_success():
     base = ThaEdfiBase(base_url=BASE_URL, client_id="id", client_secret="secret")
     with patch.object(base._auth, "get_token", return_value="tok"):
@@ -79,7 +81,9 @@ def test_fetch_token_no_auth_returns_error():
 
 def test_fetch_token_401_returns_auth_error():
     base = ThaEdfiBase(base_url=BASE_URL, client_id="id", client_secret="secret")
-    with patch.object(base._auth, "get_token", side_effect=EdfiError("token fetch failed (code 401)")):  # noqa: E501
+    with patch.object(
+        base._auth, "get_token", side_effect=EdfiError("token fetch failed (code 401)")
+    ):
         result = base.fetch_token()
     assert result["status"] == "error"
     assert result["message"] == "auth error: HTTP 401"
@@ -262,6 +266,7 @@ def test_batch_fetch_tokens_error_rows_include_expires_col():
 
 
 # --- api_version / _data_url ---
+
 
 def test_data_url_with_api_version():
     base = ThaEdfiBase(base_url=BASE_URL, api_version="v3", bearer_token="tok")

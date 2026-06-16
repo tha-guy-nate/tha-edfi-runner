@@ -196,7 +196,12 @@ class ThaStudentAssessment(ThaEdfiBase):
         if result["code"] == 404:
             return {"id": resource_id, "status": "error", "message": "not found", "data": None}
         if result["status"] == "error":
-            return {"id": resource_id, "status": "error", "message": _error_msg(result), "data": None}  # noqa: E501
+            return {
+                "id": resource_id,
+                "status": "error",
+                "message": _error_msg(result),
+                "data": None,
+            }
         return {"id": resource_id, "status": None, "message": None, "data": result["data"]}
 
     def batch_get_by_id(
@@ -307,17 +312,18 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         _action = "fetching student assessments"
         _label = f"{progress_desc}: {_action}" if progress_desc else _action
-        progress = (
-            tqdm(desc=_label, unit=" items")
-            if show_progress
-            else None
-        )
+        progress = tqdm(desc=_label, unit=" items") if show_progress else None
 
         while True:
             session = self._session()
             result = api.get_student_assessments(
-                self._req, session, self._data_url, endpoint,
-                offset=offset, limit=limit, params=params,
+                self._req,
+                session,
+                self._data_url,
+                endpoint,
+                offset=offset,
+                limit=limit,
+                params=params,
             )
             if result["status"] == "error":
                 if progress:
@@ -447,7 +453,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             if result.get("status") == "error":
                 flat.append({key_col: key_val, "status": "error", "message": result.get("message")})
             else:
-                for record in (result.get("data") or []):
+                for record in result.get("data") or []:
                     record[key_col] = key_val
                     flat.append(record)
 
