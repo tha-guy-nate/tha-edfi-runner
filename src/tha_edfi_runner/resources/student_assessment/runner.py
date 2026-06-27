@@ -286,8 +286,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
-                results[idx] = out  # type: ignore[call-overload]
+                idx, out = cast(tuple[int, dict[str, Any]], future.result())
+                results[idx] = out
 
         self.rows = results
         return results
