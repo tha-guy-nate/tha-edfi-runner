@@ -40,6 +40,7 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/tha-guy-nate/tha-edfi-runner"
 Issues = "https://github.com/tha-guy-nate/tha-edfi-runner/issues"
+Changelog = "https://github.com/tha-guy-nate/tha-edfi-runner/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tha_edfi_runner"]

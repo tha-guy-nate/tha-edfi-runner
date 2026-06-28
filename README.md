@@ -1,6 +1,9 @@
 # tha-edfi-runner
 
 [![CI](https://github.com/tha-guy-nate/tha-edfi-runner/actions/workflows/ci.yml/badge.svg)](https://github.com/tha-guy-nate/tha-edfi-runner/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tha-edfi-runner)](https://pypi.org/project/tha-edfi-runner/)
+[![Python](https://img.shields.io/pypi/pyversions/tha-edfi-runner)](https://pypi.org/project/tha-edfi-runner/)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 
 A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pipeline-friendly interface.
 
