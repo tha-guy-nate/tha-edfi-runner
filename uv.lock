@@ -526,7 +526,7 @@ wheels = [
 
 [[package]]
 name = "tha-edfi-runner"
-version = "0.1.3"
+version = "0.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "tha-req-runner" },
