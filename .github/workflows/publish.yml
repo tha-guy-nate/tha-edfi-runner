@@ -102,3 +102,15 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+
+  notify-wright-stuff:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger dep-floor bump in tha-wright-stuff
+        run: |
+          gh api repos/tha-guy-nate/tha-wright-stuff/dispatches --input - <<EOF
+          {"event_type": "tha-lib-published", "client_payload": {"package": "tha-edfi-runner", "version": "${{ github.ref_name }}"}}
+          EOF
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
