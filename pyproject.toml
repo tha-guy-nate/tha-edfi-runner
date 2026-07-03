@@ -35,6 +35,8 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "deptry>=0.25.1",
+    "pip-audit>=2.10.1",
+    "pytest-cov>=7.1.0",
     "responses>=0.25",
 ]
 
@@ -63,3 +65,6 @@ testpaths = ["tests"]
 [tool.deptry]
 known_first_party = ["tha_edfi_runner"]
 optional_dependencies_dev_groups = ["dev"]
+
+[tool.coverage.run]
+source = ["src"]
