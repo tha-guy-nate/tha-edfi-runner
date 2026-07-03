@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-03
+### Fixed
+- Bumped `tha-req-runner` dependency floor from `>=0.2.2` to `>=0.2.5` — versions 0.2.2 and earlier are yanked on PyPI, and the committed lock file was still resolving to the yanked 0.2.2.
+- Corrected `__init__.py.__version__` drift (was stuck at 0.1.3 while `pyproject.toml` had already moved to 0.1.5).
+
 ## [0.1.5] - 2026-06-27
 ### Added
 - MIT license file with attribution requirement.

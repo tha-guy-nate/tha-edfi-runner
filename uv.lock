@@ -980,7 +980,7 @@ wheels = [
 
 [[package]]
 name = "tha-edfi-runner"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "tha-req-runner" },
@@ -1007,21 +1007,22 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "tha-req-runner", specifier = ">=0.2.2" },
+    { name = "tha-req-runner", specifier = ">=0.2.5" },
     { name = "tqdm", specifier = ">=4.68.2" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
 name = "tha-req-runner"
-version = "0.2.2"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/e5/50ea4fa14f7edb0d163826af60f1029e7ab9f805df566b140b6120f54f68/tha_req_runner-0.2.2.tar.gz", hash = "sha256:03a4c1d1a4c7ff3f18881045d6a92043ced5f91d125734cd4839d1b7e5186b3a", size = 6532, upload-time = "2026-05-17T05:07:33.562Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/95/66ca9ff7900f7df0a341c8476160c6e3c4a463c068dcdea1a47e97755b79/tha_req_runner-0.2.5.tar.gz", hash = "sha256:0474e19c66909c3b1d7baa057412cf45425fcbbf43bc22ae06d828b47a10fd6d", size = 49745, upload-time = "2026-07-03T17:20:42.094Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/fe/54c23110459c95874e662a0065a872a11917467fdbabdd4abae256161859/tha_req_runner-0.2.2-py3-none-any.whl", hash = "sha256:c480117d53ddfce754a3add012e3b3fe6e8e8af2f43fbd3fdf310564bd8af996", size = 5442, upload-time = "2026-05-17T05:07:32.144Z" },
+    { url = "https://files.pythonhosted.org/packages/79/da/e65d6fbd0340a38ef6cbbef2c85c650b003fc251a8a72c59038a61591a24/tha_req_runner-0.2.5-py3-none-any.whl", hash = "sha256:bdcc7c8bd2f653d6c09ade85782010f9ab78fdc2480194a61b5ebeea2c6a7f60", size = 7044, upload-time = "2026-07-03T17:20:40.566Z" },
 ]
 
 [[package]]
