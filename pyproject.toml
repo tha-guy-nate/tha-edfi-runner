@@ -34,6 +34,7 @@ dev = [
     "pytest>=8",
     "ruff>=0.5",
     "mypy>=1.10",
+    "deptry>=0.25.1",
     "responses>=0.25",
 ]
 
@@ -58,3 +59,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.deptry]
+known_first_party = ["tha_edfi_runner"]
+optional_dependencies_dev_groups = ["dev"]
