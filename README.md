@@ -5,6 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tha-edfi-runner)](https://pypi.org/project/tha-edfi-runner/)
 [![Python](https://img.shields.io/pypi/pyversions/tha-edfi-runner)](https://pypi.org/project/tha-edfi-runner/)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![size](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fpypi.org%2Fpypi%2Ftha-edfi-runner%2Fjson&label=size&query=%24.urls%5B0%5D.size&suffix=%20B)](https://pypi.org/project/tha-edfi-runner/#files)
 
 A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pipeline-friendly interface.
 
