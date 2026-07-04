@@ -1,7 +1,11 @@
 import time
 from unittest.mock import patch
 
-from tha_edfi_runner.resources.student_assessment.runner import ThaStudentAssessment
+from tha_edfi_runner.base import ThaEdfiBase
+from tha_edfi_runner.resources.student_assessment.runner import (
+    ThaStudentAssessment,
+    _refetch_token,
+)
 
 BASE_URL = "https://edfi.example.com/api"
 TOKEN = "test_token"
@@ -20,6 +24,31 @@ def _ok(data=None, code=200):
 
 def _err(code=400, message="bad request", data=None):
     return {"status": "error", "code": code, "data": data, "message": message, "raw_response": None}
+
+
+# --- _refetch_token ---
+
+
+def test_refetch_token_returns_none_without_oauth_endpoint():
+    assert _refetch_token(BASE_URL, "key", "secret", None) is None
+
+
+def test_refetch_token_returns_token_on_success():
+    with patch.object(
+        ThaEdfiBase, "fetch_token", return_value={"token": "new-tok", "status": None}
+    ):
+        result = _refetch_token(BASE_URL, "key", "secret", "oauth/token")
+    assert result == "new-tok"
+
+
+def test_refetch_token_returns_none_on_failure():
+    with patch.object(
+        ThaEdfiBase,
+        "fetch_token",
+        return_value={"token": None, "status": "error", "message": "bad creds"},
+    ):
+        result = _refetch_token(BASE_URL, "key", "secret", "oauth/token")
+    assert result is None
 
 
 # --- post_payload (single) ---
@@ -169,6 +198,45 @@ def test_batch_post_payload_invalid_json_error():
     )
     assert result[0]["status"] == "error"
     assert "invalid JSON" in result[0]["message"]
+
+
+def test_batch_post_payload_accepts_non_string_payload():
+    runner = make_runner()
+    rows = [_make_post_row(payload={"studentAssessmentIdentifier": "A1"})]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.post_payload.return_value = {
+            "key": "dist-1",
+            "status": None,
+            "message": None,
+        }
+        result = runner.batch_post_payload(
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
+    assert result[0]["status"] is None
+
+
+def test_batch_post_payload_expired_token_proactive_refresh():
+    runner = make_runner()
+    rows = [_with_creds({**_make_post_row(), "token_expires_at": time.time() - 10})]
+    ok = {"key": "dist-1", "status": None, "message": None}
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+    ):
+        MockCls.return_value.post_payload.return_value = ok
+        runner.batch_post_payload(
+            rows,
+            payload_col="payload",
+            key_col="District BK",
+            url_col="targetUrl",
+            token_col="EdFi Token",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
+            expires_col="token_expires_at",
+            commit=True,
+        )
+    mock_refetch.assert_called_once()
 
 
 def test_batch_post_payload_skip_statuses_default():
@@ -406,6 +474,23 @@ def test_get_all_passes_query_params():
         runner.get_all(key="100", params={"assessmentIdentifier": "A1"})
     _, kwargs = mock_call.call_args
     assert kwargs["params"]["assessmentIdentifier"] == "A1"
+
+
+def test_get_all_show_progress_paginates():
+    runner = make_runner()
+    page1 = [{"id": str(i)} for i in range(2)]
+    page2 = [{"id": "99"}]
+    responses = [_ok(data=page1), _ok(data=page2)]
+    with patch.object(runner._req, "safe_call", side_effect=responses):
+        result = runner.get_all(key="100", limit=2, show_progress=True)
+    assert len(result["data"]) == 3
+
+
+def test_get_all_show_progress_closes_on_error():
+    runner = make_runner()
+    with patch.object(runner._req, "safe_call", return_value=_err(500, "server error")):
+        result = runner.get_all(key="100", show_progress=True)
+    assert result["status"] == "error"
 
 
 def _get_all_ok(key, records):
@@ -903,6 +988,26 @@ def test_batch_get_all_401_retries_and_succeeds():
     assert "status" not in result[0] or result[0].get("status") != "error"
 
 
+def test_batch_get_all_expired_token_proactive_refresh():
+    runner = make_runner()
+    rows = [_with_creds({**_batch_row(), "token_expires_at": time.time() - 10})]
+    ok = {"key": "100", "status": None, "message": None, "data": [{"id": "a"}]}
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+    ):
+        MockCls.return_value.get_all.return_value = ok
+        runner.batch_get_all(
+            rows,
+            key_col="District BK",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
+            expires_col="token_expires_at",
+        )
+    mock_refetch.assert_called_once()
+
+
 # batch_post_payload
 
 
@@ -945,3 +1050,25 @@ def test_batch_delete_by_id_401_retries_and_succeeds():
             commit=True,
         )
     assert result[0]["status"] == "deleted"
+
+
+def test_batch_delete_by_id_expired_token_proactive_refresh():
+    runner = make_runner()
+    rows = [_with_creds({**_make_delete_row(), "token_expires_at": time.time() - 10})]
+    ok = {"id": "rid-1", "key": "dist-1", "status": "deleted", "message": None}
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+    ):
+        MockCls.return_value.delete_by_id.return_value = ok
+        runner.batch_delete_by_id(
+            rows,
+            id_col="edfi_id",
+            key_col="District BK",
+            auth_key_col="oAuthKey",
+            auth_secret_col="oAuthSecret",
+            oauth_endpoint=OAUTH_EP,
+            expires_col="token_expires_at",
+            commit=True,
+        )
+    mock_refetch.assert_called_once()

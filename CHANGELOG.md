@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-04
+### Fixed
+- `get_all(show_progress=True)` crashed with `TypeError: bool() undefined when iterable == total == None` — the bare `tqdm(desc=..., unit=...)` progress bar (no `total`/`iterable`) doesn't support truthiness checks. Changed all `if progress:` guards to `if progress is not None:`. This is why the `show_progress=True` path had 0% test coverage — it was untested and broken.
+- Closed remaining test coverage gaps (94% → 100%): `OAuth2Auth.expires_at`, `_refetch_token` (previously untested — always mocked out in call-site tests), non-string payload values in `batch_post_payload`, and proactive token-refresh via `expires_col` in `batch_post_payload`/`batch_get_all`/`batch_delete_by_id` (only the reactive on-401 refresh path had tests).
+
 ## [0.1.6] - 2026-07-03
 ### Fixed
 - Bumped `tha-req-runner` dependency floor from `>=0.2.2` to `>=0.2.5` — versions 0.2.2 and earlier are yanked on PyPI, and the committed lock file was still resolving to the yanked 0.2.2.
