@@ -52,6 +52,14 @@ def test_oauth2_caches_token():
     assert call_count == 1
 
 
+def test_oauth2_expires_at_reflects_wall_clock_expiry():
+    auth = _make_oauth()
+    with patch.object(auth._req, "safe_call", return_value=_token_result("tok", expires_in=1800)):
+        auth.get_token()
+    assert auth.expires_at == auth._wall_expires_at
+    assert auth.expires_at > time.time()
+
+
 def test_oauth2_refreshes_expired_token():
     auth = _make_oauth()
     auth._token = "old"

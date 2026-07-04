@@ -326,7 +326,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 params=params,
             )
             if result["status"] == "error":
-                if progress:
+                if progress is not None:
                     progress.close()
                 if result.get("code") == 401:
                     msg = "auth error: HTTP 401"
@@ -335,13 +335,13 @@ class ThaStudentAssessment(ThaEdfiBase):
                 return {"key": key, "status": "error", "message": msg, "data": None}
             page: list[dict[str, Any]] = result["data"] or []
             all_items.extend(page)
-            if progress:
+            if progress is not None:
                 progress.update(len(page))
             if len(page) < limit:
                 break
             offset += limit
 
-        if progress:
+        if progress is not None:
             progress.close()
 
         self.rows = all_items
