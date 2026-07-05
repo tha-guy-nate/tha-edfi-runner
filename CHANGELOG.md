@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-04
+### Fixed
+- Aligned `pyproject.toml` `keywords` with the GitHub topic naming (`api` -> `rest-api`) to match how the repo is tagged elsewhere.
+
 ## [0.1.7] - 2026-07-04
 ### Fixed
 - `get_all(show_progress=True)` crashed with `TypeError: bool() undefined when iterable == total == None` — the bare `tqdm(desc=..., unit=...)` progress bar (no `total`/`iterable`) doesn't support truthiness checks. Changed all `if progress:` guards to `if progress is not None:`. This is why the `show_progress=True` path had 0% test coverage — it was untested and broken.
