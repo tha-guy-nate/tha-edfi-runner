@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tha-edfi-runner"
-version = "0.1.7"
+version = "0.1.8"
 description = "A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pipeline-friendly interface."
 readme = "README.md"
 license = { text = "MIT" }
@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-keywords = ["edfi", "ed-fi", "ods", "education", "api", "tabular", "helper"]
+keywords = ["edfi", "ed-fi", "ods", "education", "rest-api", "tabular", "helper"]
 dependencies = [
     "tha-req-runner>=0.2.5",
     "tqdm>=4.68.2",
