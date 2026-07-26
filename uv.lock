@@ -980,7 +980,7 @@ wheels = [
 
 [[package]]
 name = "tha-edfi-runner"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "tha-req-runner" },
@@ -1007,22 +1007,22 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "tha-req-runner", specifier = ">=0.2.5" },
+    { name = "tha-req-runner", specifier = ">=0.2.7" },
     { name = "tqdm", specifier = ">=4.68.2" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
 name = "tha-req-runner"
-version = "0.2.5"
+version = "0.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/95/66ca9ff7900f7df0a341c8476160c6e3c4a463c068dcdea1a47e97755b79/tha_req_runner-0.2.5.tar.gz", hash = "sha256:0474e19c66909c3b1d7baa057412cf45425fcbbf43bc22ae06d828b47a10fd6d", size = 49745, upload-time = "2026-07-03T17:20:42.094Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/15/032906ce4d8bc7ee11bf898fb4d8ae6f7b7259ccf210d84af54df56432a4/tha_req_runner-0.2.7.tar.gz", hash = "sha256:af769f3dd925084c83c890cb45a98846b4cd825c02828c8a03b84645fa2f50b0", size = 70936, upload-time = "2026-07-05T04:40:18.894Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/da/e65d6fbd0340a38ef6cbbef2c85c650b003fc251a8a72c59038a61591a24/tha_req_runner-0.2.5-py3-none-any.whl", hash = "sha256:bdcc7c8bd2f653d6c09ade85782010f9ab78fdc2480194a61b5ebeea2c6a7f60", size = 7044, upload-time = "2026-07-03T17:20:40.566Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/07/4623118316dd623eab34b5f571a012bf69f8b1f74b3da6f4556f4b2d5fd0/tha_req_runner-0.2.7-py3-none-any.whl", hash = "sha256:b2fad85680dda75423eb87a889db429e7c4c498e844cdb9247771b48ecbd5dfa", size = 7180, upload-time = "2026-07-05T04:40:17.593Z" },
 ]
 
 [[package]]
