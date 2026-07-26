@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-07-25
+### Fixed
+- Bumped `tha-req-runner` dependency floor from `>=0.2.5` to `>=0.2.7` — versions 0.2.5 and earlier are yanked on PyPI.
+- Corrected `__init__.py.__version__` drift (was stuck at 0.1.7 while `pyproject.toml` had already moved to 0.1.8).
+
 ## [0.1.8] - 2026-07-04
 ### Fixed
 - Aligned `pyproject.toml` `keywords` with the GitHub topic naming (`api` -> `rest-api`) to match how the repo is tagged elsewhere.
