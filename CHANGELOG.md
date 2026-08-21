@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-21
+### Fixed
+- Re-locked transitive `pip` (pulled in via `deptry` -> `pip-api`) from `26.1.2` to `26.2.1`, resolving a known CVE (PYSEC-2026-3721) flagged by `pip-audit`.
+
 ## [0.1.9] - 2026-07-25
 ### Fixed
 - Bumped `tha-req-runner` dependency floor from `>=0.2.5` to `>=0.2.7` — versions 0.2.5 and earlier are yanked on PyPI.
