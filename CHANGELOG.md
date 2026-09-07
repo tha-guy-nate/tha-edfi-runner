@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-09-07
+### Fixed
+- `api_version` no longer forwards an Ed-Fi ODS/API **product** release (e.g. `"7.1"`, as stored in a connection record's `edfiApiVersion`) straight into the resource URL. `ThaEdfiBase` now normalises `api_version` (and per-row `api_version_col` values) through `resolve_api_spec_segment`: product releases 3.x/5.x/6.x/7.x map to the `v3` Data Standard URL segment, an already-correct `v<N>` segment passes through, and an empty value is left untouched. Previously `.../data/7.1/ed-fi/studentAssessments` produced an HTTP 302 instead of hitting `.../data/v3/...`.
+
 ## [0.1.10] - 2026-08-21
 ### Fixed
 - Re-locked transitive `pip` (pulled in via `deptry` -> `pip-api`) from `26.1.2` to `26.2.1`, resolving a known CVE (PYSEC-2026-3721) flagged by `pip-audit`.
