@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
-from tha_edfi_runner.base import ThaEdfiBase
+from tha_edfi_runner.base import ThaEdfiBase, resolve_api_spec_segment
 from tha_edfi_runner.errors import EdfiError
 
 BASE_URL = "https://edfi.example.com/api"
@@ -280,6 +280,40 @@ def test_data_url_without_api_version():
 
 def test_data_url_strips_version_slashes():
     base = ThaEdfiBase(base_url=BASE_URL, api_version="/v3/", bearer_token="tok")
+    assert base._data_url == f"{BASE_URL}/data/v3"
+
+
+# --- resolve_api_spec_segment (ODS/API product version vs. URL spec segment) ---
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("", ""),
+        ("   ", ""),
+        ("v3", "v3"),
+        ("/v3/", "v3"),
+        ("V5", "v5"),
+        ("v6", "v6"),
+        # Ed-Fi ODS/API product releases -> the segment they actually serve under
+        ("7.1", "v3"),
+        ("7", "v3"),
+        ("6.2", "v3"),
+        ("5.3", "v3"),
+        ("3.4.0", "v3"),
+        # unknown future product major -> current default segment
+        ("9.0", "v3"),
+        # non-standard custom deployment string -> untouched
+        ("custom", "custom"),
+    ],
+)
+def test_resolve_api_spec_segment(given, expected):
+    assert resolve_api_spec_segment(given) == expected
+
+
+def test_data_url_maps_ods_product_version_to_spec_segment():
+    base = ThaEdfiBase(base_url=BASE_URL, api_version="7.1", bearer_token="tok")
+    assert base.api_version == "v3"
     assert base._data_url == f"{BASE_URL}/data/v3"
 
 

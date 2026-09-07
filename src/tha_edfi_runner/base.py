@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -8,6 +9,43 @@ from tqdm import tqdm
 
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
 from tha_edfi_runner.errors import EdfiError
+
+# Ed-Fi ODS/API product release major -> the Data Standard URL segment it serves.
+# A connection record's stored "edfiApiVersion" is the ODS/API *product* release
+# (e.g. "7.1"), NOT the API-spec version that belongs in the URL. ODS/API
+# 3.x / 5.x / 6.x / 7.x all still serve their data resources under
+# {base_url}/data/v3/. Extend this map only if a future ODS release changes it.
+_API_SPEC_SEGMENT_BY_PRODUCT_MAJOR: dict[str, str] = {
+    "3": "v3",
+    "5": "v3",
+    "6": "v3",
+    "7": "v3",
+}
+_DEFAULT_API_SPEC_SEGMENT = "v3"
+_SPEC_SEGMENT_RE = re.compile(r"v\d+", re.IGNORECASE)
+
+
+def resolve_api_spec_segment(api_version: str) -> str:
+    """Normalise a configured/stored ``api_version`` into the Ed-Fi URL path segment.
+
+    ``api_version`` may be:
+
+    * an already-correct spec segment (``"v3"``, ``"v5"``, ...) -> returned lowercased,
+    * an Ed-Fi ODS/API product release (``"7.1"``, ``"6.2"``, ...) -> mapped to the
+      Data Standard segment that release serves under (default ``"v3"``),
+    * empty -> returned unchanged, so callers whose ``base_url`` already carries the
+      full ``/data/<segment>`` path are unaffected,
+    * anything else -> passed through for non-standard deployments.
+    """
+    raw = (api_version or "").strip().strip("/")
+    if not raw:
+        return ""
+    if _SPEC_SEGMENT_RE.fullmatch(raw):
+        return raw.lower()
+    if raw[0].isdigit():
+        major = re.split(r"[._]", raw, maxsplit=1)[0]
+        return _API_SPEC_SEGMENT_BY_PRODUCT_MAJOR.get(major, _DEFAULT_API_SPEC_SEGMENT)
+    return raw
 
 
 class ThaEdfiBase:
@@ -29,7 +67,10 @@ class ThaEdfiBase:
         password: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.api_version = api_version.strip("/")
+        # `api_version` is the URL spec segment (e.g. "v3"), not an ODS/API product
+        # release. Normalise so a stored product version like "7.1" can't leak into
+        # the resource path.
+        self.api_version = resolve_api_spec_segment(api_version)
         self._data_url = (
             f"{self.base_url}/data/{self.api_version}" if self.api_version else self.base_url
         )
