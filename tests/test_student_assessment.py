@@ -178,6 +178,7 @@ def test_batch_post_payload_success():
         "message": None,
         "http_status": None,
         "row_index": 0,
+        "row_id": None,
     }
 
 
@@ -380,6 +381,68 @@ def test_batch_post_payload_dry_run_row_index_tracks_original_position():
     assert [r["row_index"] for r in result] == [0, 2]
 
 
+def test_batch_post_payload_row_id_col_echoed_and_survives_skips():
+    runner = make_runner()
+    rows = [
+        {**_make_post_row("dist-1"), "csv_id": "R1"},
+        {**_make_post_row("dist-2", status="error"), "csv_id": "R2"},  # skipped
+        {**_make_post_row("dist-3"), "csv_id": "R3"},
+    ]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.post_payload.side_effect = lambda *a, **k: {
+            "key": "x",
+            "status": None,
+            "message": None,
+        }
+        result = runner.batch_post_payload(
+            rows,
+            payload_col="payload",
+            key_col="District BK",
+            row_id_col="csv_id",
+            commit=True,
+        )
+    assert [(r["row_index"], r["row_id"]) for r in result] == [(0, "R1"), (2, "R3")]
+
+
+def test_batch_post_payload_row_id_none_without_row_id_col():
+    runner = make_runner()
+    rows = [_make_post_row(url="")]  # early client-side error, no network
+    result = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", commit=True
+    )
+    assert result[0]["row_id"] is None
+
+
+def test_batch_post_payload_row_id_col_on_dry_run_and_early_error():
+    runner = make_runner()
+    rows = [
+        {**_make_post_row("dist-1", url=""), "csv_id": "R1"},
+        {**_make_post_row("dist-2", url=""), "csv_id": "R2"},
+    ]
+    dry = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", row_id_col="csv_id", commit=False
+    )
+    assert [r["row_id"] for r in dry] == ["R1", "R2"]
+
+    committed = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", row_id_col="csv_id", commit=True
+    )
+    assert all(r["status"] == "error" for r in committed)
+    assert [r["row_id"] for r in committed] == ["R1", "R2"]
+
+
+def test_batch_post_payload_row_id_stringifies_int_and_blanks_missing():
+    runner = make_runner()
+    rows = [
+        {**_make_post_row("dist-1", url=""), "csv_id": 7},  # int value
+        {**_make_post_row("dist-2", url="")},  # column absent
+    ]
+    result = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", row_id_col="csv_id", commit=True
+    )
+    assert [r["row_id"] for r in result] == ["7", ""]
+
+
 # --- get_by_id ---
 
 
@@ -561,6 +624,32 @@ def test_batch_get_by_id_row_index_tracks_original_position_when_rows_skipped():
         }
         result = runner.batch_get_by_id(rows, id_col="id")
     assert [r["row_index"] for r in result] == [0, 2]
+
+
+def test_batch_get_by_id_row_id_col_echoed():
+    runner = make_runner()
+    rows = [
+        {**_make_get_row("rid-1"), "csv_id": "R1"},
+        {**_make_get_row("rid-2", status="error"), "csv_id": "R2"},  # skipped
+        {**_make_get_row("rid-3"), "csv_id": "R3"},
+    ]
+    with patch(PATCH_RUNNER) as MockRunner:
+        MockRunner.return_value.get_by_id.side_effect = lambda *a, **k: {
+            "id": "x",
+            "status": None,
+            "message": None,
+            "data": {},
+            "http_status": 200,
+        }
+        result = runner.batch_get_by_id(rows, id_col="id", row_id_col="csv_id")
+    assert [(r["row_index"], r["row_id"]) for r in result] == [(0, "R1"), (2, "R3")]
+
+
+def test_batch_get_by_id_row_id_none_without_row_id_col():
+    runner = make_runner()
+    rows = [{"row status": "", "targetUrl": BASE_URL, "EdFi Token": TOKEN}]  # early error
+    result = runner.batch_get_by_id(rows, id_col="id")
+    assert result[0]["row_id"] is None
 
 
 def test_batch_get_by_id_sets_self_rows():
@@ -1012,6 +1101,32 @@ def test_batch_delete_by_id_row_index_tracks_original_position_when_rows_skipped
             rows, id_col="edfi_id", key_col="District BK", commit=True
         )
     assert [r["row_index"] for r in result] == [0, 2]
+
+
+def test_batch_delete_by_id_row_id_col_echoed_commit_and_dry_run():
+    runner = make_runner()
+    rows = [
+        {**_make_delete_row("rid-1", "dist-1"), "csv_id": "R1"},
+        {**_make_delete_row("rid-2", "dist-1", status="warning"), "csv_id": "R2"},  # skipped
+        {**_make_delete_row("rid-3", "dist-1"), "csv_id": "R3"},
+    ]
+    dry = runner.batch_delete_by_id(
+        rows, id_col="edfi_id", key_col="District BK", row_id_col="csv_id", commit=False
+    )
+    assert [(r["row_index"], r["row_id"]) for r in dry] == [(0, "R1"), (2, "R3")]
+
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.delete_by_id.side_effect = lambda *a, **k: {
+            "id": "x",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
+            "http_status": 204,
+        }
+        committed = runner.batch_delete_by_id(
+            rows, id_col="edfi_id", key_col="District BK", row_id_col="csv_id", commit=True
+        )
+    assert [(r["row_index"], r["row_id"]) for r in committed] == [(0, "R1"), (2, "R3")]
 
 
 def test_batch_delete_by_id_sets_self_rows():
