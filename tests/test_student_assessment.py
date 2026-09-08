@@ -346,6 +346,40 @@ def test_batch_post_payload_propagates_http_status():
     assert result[0]["row_index"] == 0
 
 
+def test_batch_post_payload_row_index_tracks_original_position_when_rows_skipped():
+    runner = make_runner()
+    rows = [
+        _make_post_row("dist-1"),
+        _make_post_row("dist-2", status="error"),  # skipped
+        _make_post_row("dist-3"),
+        _make_post_row("dist-4", status="warning"),  # skipped
+        _make_post_row("dist-5"),
+    ]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.post_payload.side_effect = lambda *a, **k: {
+            "key": "x",
+            "status": None,
+            "message": None,
+        }
+        result = runner.batch_post_payload(
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
+    assert [r["row_index"] for r in result] == [0, 2, 4]
+
+
+def test_batch_post_payload_dry_run_row_index_tracks_original_position():
+    runner = make_runner()
+    rows = [
+        _make_post_row("dist-1"),
+        _make_post_row("dist-2", status="error"),  # skipped
+        _make_post_row("dist-3"),
+    ]
+    result = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", commit=False
+    )
+    assert [r["row_index"] for r in result] == [0, 2]
+
+
 # --- get_by_id ---
 
 
@@ -508,6 +542,25 @@ def test_batch_get_by_id_early_error_has_null_http_status():
     result = runner.batch_get_by_id(rows, id_col="id")
     assert result[0]["row_index"] == 0
     assert result[0]["http_status"] is None
+
+
+def test_batch_get_by_id_row_index_tracks_original_position_when_rows_skipped():
+    runner = make_runner()
+    rows = [
+        _make_get_row("rid-1"),
+        _make_get_row("rid-2", status="error"),  # skipped
+        _make_get_row("rid-3"),
+    ]
+    with patch(PATCH_RUNNER) as MockRunner:
+        MockRunner.return_value.get_by_id.side_effect = lambda *a, **k: {
+            "id": "x",
+            "status": None,
+            "message": None,
+            "data": {},
+            "http_status": 200,
+        }
+        result = runner.batch_get_by_id(rows, id_col="id")
+    assert [r["row_index"] for r in result] == [0, 2]
 
 
 def test_batch_get_by_id_sets_self_rows():
@@ -938,6 +991,27 @@ def test_batch_delete_by_id_dry_run_has_row_index():
     result = runner.batch_delete_by_id(rows, id_col="edfi_id", key_col="District BK", commit=False)
     assert [r["row_index"] for r in result] == [0, 1]
     assert all(r["http_status"] is None for r in result)
+
+
+def test_batch_delete_by_id_row_index_tracks_original_position_when_rows_skipped():
+    runner = make_runner()
+    rows = [
+        _make_delete_row("rid-1", "dist-1"),
+        _make_delete_row("rid-2", "dist-1", status="warning"),  # skipped
+        _make_delete_row("rid-3", "dist-1"),
+    ]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.delete_by_id.side_effect = lambda *a, **k: {
+            "id": "x",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
+            "http_status": 204,
+        }
+        result = runner.batch_delete_by_id(
+            rows, id_col="edfi_id", key_col="District BK", commit=True
+        )
+    assert [r["row_index"] for r in result] == [0, 2]
 
 
 def test_batch_delete_by_id_sets_self_rows():
