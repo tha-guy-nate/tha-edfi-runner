@@ -226,6 +226,7 @@ auth_key_col=None,              # enable reactive re-auth on 401
 auth_secret_col=None,
 oauth_endpoint=None,
 expires_col=None,               # enable proactive re-auth before token expiry
+row_id_col=None,                # column echoed onto each result as `row_id`
 ```
 
 Method-specific required params:
@@ -239,11 +240,17 @@ runner.batch_delete_by_id(rows, *, id_col, key_col, ..., commit=False) -> list[d
 
 Results stored in `runner.rows`.
 
-`batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` add two fields to
-each result dict: `row_index` (the row's position in the `rows` you passed in —
-unchanged by rows dropped via `skip_statuses`) as a collision-free correlation key
-for `ThaMap.enrich_rows` when the business key repeats across a batch, and
-`http_status` (see the single-method note above).
+`batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` add these fields to
+each result dict:
+
+- `row_index` — the row's position in the `rows` you passed in, unchanged by rows
+  dropped via `skip_statuses`. A position-based correlation key for
+  `ThaMap.enrich_rows` when the business key repeats across a batch.
+- `row_id` — the value of `row_id_col` for that row, copied through verbatim (a
+  caller-owned identity assigned upstream, e.g. at CSV read). `None` on every
+  result unless you pass `row_id_col`. Prefer this over `row_index` when you have a
+  stable id; `row_index` is the fallback.
+- `http_status` — see the single-method note above.
 
 ### Re-auth
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-09-08
+### Added
+- `batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` take an optional `row_id_col`. When set, each result carries `row_id` — the value of that column, copied straight through — as a caller-owned correlation key that is independent of `row_index` and the business key. Use it to thread an identity assigned upstream (e.g. at CSV read) all the way to the result, so results can be matched back to source rows without relying on list position. `row_id` is `None` on every result when `row_id_col` is not passed. Missing values become `""`; other values are stringified (an integer id round-trips as its digits). `row_index` remains the position-based fallback.
+
 ## [0.1.13] - 2026-09-08
 ### Changed
 - `row_index` on `batch_post_payload` / `batch_get_by_id` / `batch_delete_by_id` results is now the row's position in the caller's `rows` list, **not** its position in the post-`skip_statuses` filtered subset. When rows are skipped, the surviving results keep the indices those rows had on input (e.g. rows `0,2,4` after `1` and `3` are skipped), so `row_index` lines up with the original `rows` for `ThaMap.enrich_rows`. Batches with nothing skipped are unaffected. Introduced one release earlier in 0.1.12.
