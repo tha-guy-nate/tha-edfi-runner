@@ -189,16 +189,19 @@ Inherits `ThaEdfiBase`. Default endpoint: `ed-fi/studentAssessments`.
 
 ```python
 runner.post_payload(payload, *, key, endpoint=..., commit=False) -> dict
-# {"key": ..., "status": None | "error" | "dry_run", "message": ...}
+# {"key": ..., "status": None | "error" | "dry_run", "message": ..., "http_status": int | None}
 
 runner.get_by_id(resource_id, *, endpoint=...) -> dict
-# {"id": ..., "status": None | "error", "message": ..., "data": dict | None}
+# {"id": ..., "status": None | "error", "message": ..., "data": dict | None, "http_status": int | None}
 
 runner.get_all(*, key, endpoint=..., params=None, limit=500, show_progress=False) -> dict
 # {"key": ..., "status": None | "error", "message": ..., "data": [dict, ...]}
 
 runner.delete_by_id(resource_id, *, key, endpoint=..., commit=False) -> dict
-# {"id": ..., "key": ..., "status": "deleted" | "error" | "dry_run", "message": ...}
+# {"id": ..., "key": ..., "status": "deleted" | "error" | "dry_run", "message": ..., "http_status": int | None}
+
+# http_status is the HTTP status code of the Ed-Fi response (e.g. 201, 409, 401),
+# or None for client-side failures (dry run, invalid JSON, missing column).
 ```
 
 All write methods require `commit=True` to execute — otherwise return `status="dry_run"`.
@@ -235,6 +238,11 @@ runner.batch_delete_by_id(rows, *, id_col, key_col, ..., commit=False) -> list[d
 ```
 
 Results stored in `runner.rows`.
+
+`batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` add two fields to
+each result dict: `row_index` (the row's position in the returned list / filtered
+`rows`) as a collision-free correlation key for `ThaMap.enrich_rows` when the business
+key repeats across a batch, and `http_status` (see the single-method note above).
 
 ### Re-auth
 

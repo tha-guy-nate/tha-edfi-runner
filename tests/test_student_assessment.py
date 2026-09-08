@@ -57,7 +57,12 @@ def test_refetch_token_returns_none_on_failure():
 def test_post_payload_dry_run():
     runner = make_runner()
     result = runner.post_payload({"studentAssessmentIdentifier": "A1"}, key="dist-1", commit=False)
-    assert result == {"key": "dist-1", "status": "dry_run", "message": None}
+    assert result == {
+        "key": "dist-1",
+        "status": "dry_run",
+        "message": None,
+        "http_status": None,
+    }
 
 
 def test_post_payload_success_dict():
@@ -66,7 +71,7 @@ def test_post_payload_success_dict():
         result = runner.post_payload(
             {"studentAssessmentIdentifier": "A1"}, key="dist-1", commit=True
         )
-    assert result == {"key": "dist-1", "status": None, "message": None}
+    assert result == {"key": "dist-1", "status": None, "message": None, "http_status": 201}
 
 
 def test_post_payload_success_str():
@@ -75,7 +80,16 @@ def test_post_payload_success_str():
         result = runner.post_payload(
             '{"studentAssessmentIdentifier": "A1"}', key="dist-1", commit=True
         )
-    assert result == {"key": "dist-1", "status": None, "message": None}
+    assert result == {"key": "dist-1", "status": None, "message": None, "http_status": 201}
+
+
+def test_post_payload_error_parses_http_status():
+    runner = make_runner()
+    err = _err(409, "409 Client Error: Conflict")
+    with patch.object(runner._req, "safe_call", return_value=err):
+        result = runner.post_payload({"id": "1"}, key="dist-1", commit=True)
+    assert result["status"] == "error"
+    assert result["http_status"] == 409
 
 
 def test_post_payload_invalid_json_str():
@@ -84,6 +98,7 @@ def test_post_payload_invalid_json_str():
     assert result["status"] == "error"
     assert "invalid JSON" in result["message"]
     assert result["key"] == "dist-1"
+    assert result["http_status"] is None
 
 
 def test_post_payload_error_response():
@@ -157,7 +172,13 @@ def test_batch_post_payload_success():
         result = runner.batch_post_payload(
             rows, payload_col="payload", key_col="District BK", commit=True
         )
-    assert result[0] == {"key": "dist-1", "status": None, "message": None}
+    assert result[0] == {
+        "key": "dist-1",
+        "status": None,
+        "message": None,
+        "http_status": None,
+        "row_index": 0,
+    }
 
 
 def test_batch_post_payload_missing_url_error():
@@ -274,6 +295,57 @@ def test_batch_post_payload_sets_self_rows():
     assert runner.rows is result
 
 
+def test_batch_post_payload_row_index_disambiguates_shared_business_key():
+    runner = make_runner()
+    # three payloads for the same account (e.g. three school years) in one batch
+    rows = [_make_post_row("dist-1"), _make_post_row("dist-1"), _make_post_row("dist-1")]
+    with patch(PATCH_RUNNER) as MockCls:
+        # fresh dict per call — the real post_payload never aliases results
+        MockCls.return_value.post_payload.side_effect = lambda *a, **k: {
+            "key": "dist-1",
+            "status": None,
+            "message": None,
+        }
+        result = runner.batch_post_payload(
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
+    assert [r["row_index"] for r in result] == [0, 1, 2]
+    assert {r["key"] for r in result} == {"dist-1"}
+
+
+def test_batch_post_payload_row_index_on_dry_run_and_early_error():
+    runner = make_runner()
+    rows = [_make_post_row("dist-1"), _make_post_row("dist-2")]
+    dry = runner.batch_post_payload(
+        rows, payload_col="payload", key_col="District BK", commit=False
+    )
+    assert [r["row_index"] for r in dry] == [0, 1]
+    assert all(r["http_status"] is None for r in dry)
+
+    err = runner.batch_post_payload(
+        [_make_post_row(url="")], payload_col="payload", key_col="District BK", commit=True
+    )
+    assert err[0]["row_index"] == 0
+    assert err[0]["http_status"] is None
+
+
+def test_batch_post_payload_propagates_http_status():
+    runner = make_runner()
+    rows = [_make_post_row("dist-1")]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.post_payload.return_value = {
+            "key": "dist-1",
+            "status": "error",
+            "message": "409 Client Error: Conflict",
+            "http_status": 409,
+        }
+        result = runner.batch_post_payload(
+            rows, payload_col="payload", key_col="District BK", commit=True
+        )
+    assert result[0]["http_status"] == 409
+    assert result[0]["row_index"] == 0
+
+
 # --- get_by_id ---
 
 
@@ -306,6 +378,14 @@ def test_get_by_id_returns_error_on_other_error():
     assert result["id"] == "abc-123"
     assert result["status"] == "error"
     assert result["data"] is None
+
+
+def test_get_by_id_carries_http_status():
+    runner = make_runner()
+    with patch.object(runner._req, "safe_call", return_value=_ok(data={"id": "x"}, code=200)):
+        assert runner.get_by_id("x")["http_status"] == 200
+    with patch.object(runner._req, "safe_call", return_value=_err(code=404, message="not found")):
+        assert runner.get_by_id("x")["http_status"] == 404
 
 
 # --- batch_get_by_id ---
@@ -404,6 +484,30 @@ def test_batch_get_by_id_custom_col_names():
         }
         result = runner.batch_get_by_id(rows, id_col="rid", url_col="url", token_col="tok")
     assert result[0]["status"] is None
+
+
+def test_batch_get_by_id_adds_row_index_and_http_status():
+    runner = make_runner()
+    rows = [_make_get_row("rid-1"), _make_get_row("rid-2")]
+    with patch(PATCH_RUNNER) as MockRunner:
+        MockRunner.return_value.get_by_id.side_effect = lambda *a, **k: {
+            "id": "rid-1",
+            "status": None,
+            "message": None,
+            "data": {},
+            "http_status": 200,
+        }
+        result = runner.batch_get_by_id(rows, id_col="id")
+    assert [r["row_index"] for r in result] == [0, 1]
+    assert all(r["http_status"] == 200 for r in result)
+
+
+def test_batch_get_by_id_early_error_has_null_http_status():
+    runner = make_runner()
+    rows = [{"row status": "", "targetUrl": BASE_URL, "EdFi Token": TOKEN}]
+    result = runner.batch_get_by_id(rows, id_col="id")
+    assert result[0]["row_index"] == 0
+    assert result[0]["http_status"] is None
 
 
 def test_batch_get_by_id_sets_self_rows():
@@ -641,6 +745,15 @@ def test_delete_by_id_error():
     assert result["key"] == "dist-1"
 
 
+def test_delete_by_id_carries_http_status():
+    runner = make_runner()
+    assert runner.delete_by_id("x", key="d", commit=False)["http_status"] is None
+    with patch.object(runner._req, "safe_call", return_value=_ok(code=204)):
+        assert runner.delete_by_id("x", key="d", commit=True)["http_status"] == 204
+    with patch.object(runner._req, "safe_call", return_value=_err(404, "not found")):
+        assert runner.delete_by_id("x", key="d", commit=True)["http_status"] == 404
+
+
 # --- batch_delete_by_id ---
 
 
@@ -799,6 +912,32 @@ def test_batch_delete_by_id_skip_statuses_empty_disables():
             rows, id_col="edfi_id", key_col="District BK", skip_statuses=[], commit=True
         )
     assert len(result) == 2
+
+
+def test_batch_delete_by_id_adds_row_index_and_http_status():
+    runner = make_runner()
+    rows = [_make_delete_row("rid-1", "dist-1"), _make_delete_row("rid-2", "dist-1")]
+    with patch(PATCH_RUNNER) as MockCls:
+        MockCls.return_value.delete_by_id.side_effect = lambda *a, **k: {
+            "id": "rid-1",
+            "key": "dist-1",
+            "status": "deleted",
+            "message": None,
+            "http_status": 204,
+        }
+        result = runner.batch_delete_by_id(
+            rows, id_col="edfi_id", key_col="District BK", commit=True
+        )
+    assert [r["row_index"] for r in result] == [0, 1]
+    assert all(r["http_status"] == 204 for r in result)
+
+
+def test_batch_delete_by_id_dry_run_has_row_index():
+    runner = make_runner()
+    rows = [_make_delete_row("rid-1", "dist-1"), _make_delete_row("rid-2", "dist-1")]
+    result = runner.batch_delete_by_id(rows, id_col="edfi_id", key_col="District BK", commit=False)
+    assert [r["row_index"] for r in result] == [0, 1]
+    assert all(r["http_status"] is None for r in result)
 
 
 def test_batch_delete_by_id_sets_self_rows():
