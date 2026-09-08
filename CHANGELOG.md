@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-09-08
+### Added
+- Every per-row result from `ThaStudentAssessment.batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` now carries a `row_index` key — the position of the row in the returned list (which mirrors the filtered `rows`). It is a collision-free correlation key for merging results back onto the source rows (e.g. via `ThaMap.enrich_rows`) when the business key in `key` repeats across a batch — multiple school years, job types, or canary records for one account.
+- `post_payload`, `get_by_id`, `delete_by_id` and their `batch_*` counterparts now return an `http_status` field holding the integer HTTP status code of the Ed-Fi response (e.g. `201`, `409`, `401`), or `None` for client-side failures (dry run, invalid JSON, missing column/URL/token). Callers can branch on the code — e.g. treat a `409` as an expected conflict versus a `401`/`403` auth failure — without substring-matching it out of the `message` prose.
+- Both fields are purely additive; existing `key`/`id`/`status`/`message`/`data` fields are unchanged. `batch_get_all` (flat, account-deduplicated record list) is intentionally left as-is — it does not return one dict per row.
+
 ## [0.1.11] - 2026-09-07
 ### Fixed
 - `api_version` no longer forwards an Ed-Fi ODS/API **product** release (e.g. `"7.1"`, as stored in a connection record's `edfiApiVersion`) straight into the resource URL. `ThaEdfiBase` now normalises `api_version` (and per-row `api_version_col` values) through `resolve_api_spec_segment`: product releases 3.x/5.x/6.x/7.x map to the `v3` Data Standard URL segment, an already-correct `v<N>` segment passes through, and an empty value is left untouched. Previously `.../data/7.1/ed-fi/studentAssessments` produced an HTTP 302 instead of hitting `.../data/v3/...`.

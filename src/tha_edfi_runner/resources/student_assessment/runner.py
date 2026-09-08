@@ -44,33 +44,38 @@ class ThaStudentAssessment(ThaEdfiBase):
         endpoint: str = ep.STUDENT_ASSESSMENTS,
         commit: bool = False,
     ) -> dict[str, Any]:
-        """POST a single payload to Ed-Fi. Returns {"key", "status", "message"}.
+        """POST a single payload to Ed-Fi. Returns {"key", "status", "message", "http_status"}.
+
+        ``http_status`` is the HTTP status code of the Ed-Fi response (e.g. 201, 409,
+        401), or ``None`` for client-side failures (dry run, invalid JSON).
 
         payload may be a dict or a JSON string.
         # TODO: support additional payload types (form data, raw bytes)
         """
         if not commit:
-            return {"key": key, "status": "dry_run", "message": None}
+            return {"key": key, "status": "dry_run", "message": None, "http_status": None}
         parsed_payload: dict[str, Any]
         if isinstance(payload, str):
             try:
                 parsed_payload = json.loads(payload)
             except (json.JSONDecodeError, TypeError) as exc:
-                return {"key": key, "status": "error", "message": f"invalid JSON: {exc}"}
+                msg = f"invalid JSON: {exc}"
+                return {"key": key, "status": "error", "message": msg, "http_status": None}
         else:
             parsed_payload = payload
         session = self._session()
         result = api.post_student_assessment(
             self._req, session, self._data_url, endpoint, parsed_payload
         )
+        http_status = result.get("code")
         if result["status"] == "error":
             msg = _error_msg(result)
             if result.get("code") != 401 and isinstance(result.get("data"), dict):
                 detail = result["data"].get("message") or result["data"].get("error") or ""
                 if detail:
                     msg = f"{msg}: {detail}"
-            return {"key": key, "status": "error", "message": msg}
-        return {"key": key, "status": None, "message": None}
+            return {"key": key, "status": "error", "message": msg, "http_status": http_status}
+        return {"key": key, "status": None, "message": None, "http_status": http_status}
 
     def batch_post_payload(
         self,
@@ -93,14 +98,27 @@ class ThaStudentAssessment(ThaEdfiBase):
         expires_col: str | None = None,
         commit: bool = False,
     ) -> list[dict[str, Any]]:
-        """POST each row's payload to Ed-Fi using per-row credentials."""
+        """POST each row's payload to Ed-Fi using per-row credentials.
+
+        Each result carries ``row_index`` (position in the returned list / filtered
+        ``rows``) as a collision-free correlation key — the business key in ``key``
+        can repeat when a caller posts several payloads for one account in a batch —
+        plus ``http_status`` (the Ed-Fi response code, or ``None`` for client-side
+        failures). Feed the results to ``ThaMap.enrich_rows`` keyed on ``row_index``.
+        """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
         if not commit:
             out = [
-                {"key": str(row.get(key_col) or "").strip(), "status": "dry_run", "message": None}
-                for row in valid_rows
+                {
+                    "key": str(row.get(key_col) or "").strip(),
+                    "status": "dry_run",
+                    "message": None,
+                    "http_status": None,
+                    "row_index": idx,
+                }
+                for idx, row in enumerate(valid_rows)
             ]
             self.rows = out
             return out
@@ -176,8 +194,10 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
-                results[idx] = out  # type: ignore[call-overload]
+                idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                res["row_index"] = idx
+                res.setdefault("http_status", None)
+                results[idx] = res
 
         self.rows = results
         return results
@@ -188,21 +208,38 @@ class ThaStudentAssessment(ThaEdfiBase):
         *,
         endpoint: str = ep.STUDENT_ASSESSMENTS,
     ) -> dict[str, Any]:
-        """Fetch a single student assessment by Ed-Fi resource ID."""
+        """Fetch a single student assessment by Ed-Fi resource ID.
+
+        ``http_status`` carries the HTTP response code (e.g. 200, 404, 401).
+        """
         session = self._session()
         result = api.get_student_assessment_by_id(
             self._req, session, self._data_url, endpoint, resource_id
         )
+        http_status = result.get("code")
         if result["code"] == 404:
-            return {"id": resource_id, "status": "error", "message": "not found", "data": None}
+            return {
+                "id": resource_id,
+                "status": "error",
+                "message": "not found",
+                "data": None,
+                "http_status": http_status,
+            }
         if result["status"] == "error":
             return {
                 "id": resource_id,
                 "status": "error",
                 "message": _error_msg(result),
                 "data": None,
+                "http_status": http_status,
             }
-        return {"id": resource_id, "status": None, "message": None, "data": result["data"]}
+        return {
+            "id": resource_id,
+            "status": None,
+            "message": None,
+            "data": result["data"],
+            "http_status": http_status,
+        }
 
     def batch_get_by_id(
         self,
@@ -223,7 +260,12 @@ class ThaStudentAssessment(ThaEdfiBase):
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
     ) -> list[dict[str, Any]]:
-        """GET each row's student assessment by ID using per-row credentials."""
+        """GET each row's student assessment by ID using per-row credentials.
+
+        Each result carries ``row_index`` (position in the returned list / filtered
+        ``rows``) as a collision-free correlation key, plus ``http_status`` (the
+        Ed-Fi response code, or ``None`` for client-side failures).
+        """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -286,8 +328,10 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = cast(tuple[int, dict[str, Any]], future.result())
-                results[idx] = out
+                idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                res["row_index"] = idx
+                res.setdefault("http_status", None)
+                results[idx] = res
 
         self.rows = results
         return results
@@ -468,17 +512,40 @@ class ThaStudentAssessment(ThaEdfiBase):
         endpoint: str = ep.STUDENT_ASSESSMENTS,
         commit: bool = False,
     ) -> dict[str, Any]:
-        """Delete a single student assessment by Ed-Fi resource ID."""
+        """Delete a single student assessment by Ed-Fi resource ID.
+
+        ``http_status`` carries the HTTP response code (e.g. 204, 404, 401), or
+        ``None`` on a dry run.
+        """
         if not commit:
-            return {"id": resource_id, "key": key, "status": "dry_run", "message": None}
+            return {
+                "id": resource_id,
+                "key": key,
+                "status": "dry_run",
+                "message": None,
+                "http_status": None,
+            }
         session = self._session()
         result = api.delete_student_assessment(
             self._req, session, self._data_url, endpoint, resource_id
         )
+        http_status = result.get("code")
         if result["status"] == "error":
             msg = result["message"] or f"HTTP {result['code']}"
-            return {"id": resource_id, "key": key, "status": "error", "message": msg}
-        return {"id": resource_id, "key": key, "status": "deleted", "message": None}
+            return {
+                "id": resource_id,
+                "key": key,
+                "status": "error",
+                "message": msg,
+                "http_status": http_status,
+            }
+        return {
+            "id": resource_id,
+            "key": key,
+            "status": "deleted",
+            "message": None,
+            "http_status": http_status,
+        }
 
     def batch_delete_by_id(
         self,
@@ -501,7 +568,12 @@ class ThaStudentAssessment(ThaEdfiBase):
         expires_col: str | None = None,
         commit: bool = False,
     ) -> list[dict[str, Any]]:
-        """DELETE each row's student assessment by ID using per-row credentials."""
+        """DELETE each row's student assessment by ID using per-row credentials.
+
+        Each result carries ``row_index`` (position in the returned list / filtered
+        ``rows``) as a collision-free correlation key, plus ``http_status`` (the
+        Ed-Fi response code, or ``None`` for client-side failures / dry runs).
+        """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -512,8 +584,10 @@ class ThaStudentAssessment(ThaEdfiBase):
                     "key": str(row.get(key_col) or "").strip(),
                     "status": "dry_run",
                     "message": None,
+                    "http_status": None,
+                    "row_index": idx,
                 }
-                for row in valid_rows
+                for idx, row in enumerate(valid_rows)
             ]
             self.rows = out
             return out
@@ -580,8 +654,10 @@ class ThaStudentAssessment(ThaEdfiBase):
                 else as_completed(futures)
             )
             for future in futures_iter:
-                idx, out = cast(tuple[int, dict[str, Any]], future.result())  # type: ignore[assignment]
-                results[idx] = out  # type: ignore[call-overload]
+                idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                res["row_index"] = idx
+                res.setdefault("http_status", None)
+                results[idx] = res
 
         self.rows = results
         return results
