@@ -33,6 +33,24 @@ def _error_msg(result: dict[str, Any]) -> str:
     return result.get("message") or f"HTTP {result.get('code')}"
 
 
+def _kept_rows_with_indices(
+    rows: list[dict[str, Any]], status_col: str, skip: list[str]
+) -> tuple[list[dict[str, Any]], list[int]]:
+    """Drop rows whose ``status_col`` is in ``skip``, keeping each survivor paired
+    with its original position in ``rows``.
+
+    The positions become each result's ``row_index`` so it stays a stable
+    correlation key even when rows are skipped.
+    """
+    valid_rows: list[dict[str, Any]] = []
+    orig_indices: list[int] = []
+    for orig_idx, row in enumerate(rows):
+        if row.get(status_col) not in skip:
+            valid_rows.append(row)
+            orig_indices.append(orig_idx)
+    return valid_rows, orig_indices
+
+
 class ThaStudentAssessment(ThaEdfiBase):
     """Ed-Fi student assessment resource runner."""
 
@@ -100,14 +118,15 @@ class ThaStudentAssessment(ThaEdfiBase):
     ) -> list[dict[str, Any]]:
         """POST each row's payload to Ed-Fi using per-row credentials.
 
-        Each result carries ``row_index`` (position in the returned list / filtered
-        ``rows``) as a collision-free correlation key — the business key in ``key``
-        can repeat when a caller posts several payloads for one account in a batch —
-        plus ``http_status`` (the Ed-Fi response code, or ``None`` for client-side
+        Each result carries ``row_index`` — the row's position in the caller's
+        ``rows`` list, unchanged by any rows skipped via ``skip_statuses`` — as a
+        collision-free correlation key (the business key in ``key`` can repeat when
+        a caller posts several payloads for one account in a batch), plus
+        ``http_status`` (the Ed-Fi response code, or ``None`` for client-side
         failures). Feed the results to ``ThaMap.enrich_rows`` keyed on ``row_index``.
         """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
-        valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
+        valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
 
         if not commit:
             out = [
@@ -116,9 +135,9 @@ class ThaStudentAssessment(ThaEdfiBase):
                     "status": "dry_run",
                     "message": None,
                     "http_status": None,
-                    "row_index": idx,
+                    "row_index": orig_indices[pos],
                 }
-                for idx, row in enumerate(valid_rows)
+                for pos, row in enumerate(valid_rows)
             ]
             self.rows = out
             return out
@@ -195,7 +214,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             )
             for future in futures_iter:
                 idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = idx
+                res["row_index"] = orig_indices[idx]
                 res.setdefault("http_status", None)
                 results[idx] = res
 
@@ -262,12 +281,13 @@ class ThaStudentAssessment(ThaEdfiBase):
     ) -> list[dict[str, Any]]:
         """GET each row's student assessment by ID using per-row credentials.
 
-        Each result carries ``row_index`` (position in the returned list / filtered
-        ``rows``) as a collision-free correlation key, plus ``http_status`` (the
-        Ed-Fi response code, or ``None`` for client-side failures).
+        Each result carries ``row_index`` — the row's position in the caller's
+        ``rows`` list, unchanged by any rows skipped via ``skip_statuses`` — as a
+        collision-free correlation key, plus ``http_status`` (the Ed-Fi response
+        code, or ``None`` for client-side failures).
         """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
-        valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
+        valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
 
@@ -329,7 +349,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             )
             for future in futures_iter:
                 idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = idx
+                res["row_index"] = orig_indices[idx]
                 res.setdefault("http_status", None)
                 results[idx] = res
 
@@ -570,12 +590,13 @@ class ThaStudentAssessment(ThaEdfiBase):
     ) -> list[dict[str, Any]]:
         """DELETE each row's student assessment by ID using per-row credentials.
 
-        Each result carries ``row_index`` (position in the returned list / filtered
-        ``rows``) as a collision-free correlation key, plus ``http_status`` (the
-        Ed-Fi response code, or ``None`` for client-side failures / dry runs).
+        Each result carries ``row_index`` — the row's position in the caller's
+        ``rows`` list, unchanged by any rows skipped via ``skip_statuses`` — as a
+        collision-free correlation key, plus ``http_status`` (the Ed-Fi response
+        code, or ``None`` for client-side failures / dry runs).
         """
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
-        valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
+        valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
 
         if not commit:
             out = [
@@ -585,9 +606,9 @@ class ThaStudentAssessment(ThaEdfiBase):
                     "status": "dry_run",
                     "message": None,
                     "http_status": None,
-                    "row_index": idx,
+                    "row_index": orig_indices[pos],
                 }
-                for idx, row in enumerate(valid_rows)
+                for pos, row in enumerate(valid_rows)
             ]
             self.rows = out
             return out
@@ -655,7 +676,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             )
             for future in futures_iter:
                 idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = idx
+                res["row_index"] = orig_indices[idx]
                 res.setdefault("http_status", None)
                 results[idx] = res
 

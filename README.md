@@ -240,9 +240,10 @@ runner.batch_delete_by_id(rows, *, id_col, key_col, ..., commit=False) -> list[d
 Results stored in `runner.rows`.
 
 `batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` add two fields to
-each result dict: `row_index` (the row's position in the returned list / filtered
-`rows`) as a collision-free correlation key for `ThaMap.enrich_rows` when the business
-key repeats across a batch, and `http_status` (see the single-method note above).
+each result dict: `row_index` (the row's position in the `rows` you passed in —
+unchanged by rows dropped via `skip_statuses`) as a collision-free correlation key
+for `ThaMap.enrich_rows` when the business key repeats across a batch, and
+`http_status` (see the single-method note above).
 
 ### Re-auth
 

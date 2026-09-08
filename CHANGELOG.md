@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-09-08
+### Changed
+- `row_index` on `batch_post_payload` / `batch_get_by_id` / `batch_delete_by_id` results is now the row's position in the caller's `rows` list, **not** its position in the post-`skip_statuses` filtered subset. When rows are skipped, the surviving results keep the indices those rows had on input (e.g. rows `0,2,4` after `1` and `3` are skipped), so `row_index` lines up with the original `rows` for `ThaMap.enrich_rows`. Batches with nothing skipped are unaffected. Introduced one release earlier in 0.1.12.
+
 ## [0.1.12] - 2026-09-08
 ### Added
 - Every per-row result from `ThaStudentAssessment.batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` now carries a `row_index` key — the position of the row in the returned list (which mirrors the filtered `rows`). It is a collision-free correlation key for merging results back onto the source rows (e.g. via `ThaMap.enrich_rows`) when the business key in `key` repeats across a batch — multiple school years, job types, or canary records for one account.
