@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-09-22
+### Changed
+- Bumped dep floor: tha-req-runner>=0.3.0 (was >=0.2.7). Hygiene bump only — this repo doesn't use the `httpx`/`httpx2` extra, just keeping current with tha-req-runner's latest release.
+
 ## [0.1.14] - 2026-09-08
 ### Added
 - `batch_post_payload`, `batch_get_by_id`, and `batch_delete_by_id` take an optional `row_id_col`. When set, each result carries `row_id` — the value of that column, copied straight through — as a caller-owned correlation key that is independent of `row_index` and the business key. Use it to thread an identity assigned upstream (e.g. at CSV read) all the way to the result, so results can be matched back to source rows without relying on list position. `row_id` is `None` on every result when `row_id_col` is not passed. Missing values become `""`; other values are stringified (an integer id round-trips as its digits). `row_index` remains the position-based fallback.
