@@ -980,7 +980,7 @@ wheels = [
 
 [[package]]
 name = "tha-edfi-runner"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "." }
 dependencies = [
     { name = "tha-req-runner" },
@@ -1007,22 +1007,22 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "tha-req-runner", specifier = ">=0.2.7" },
+    { name = "tha-req-runner", specifier = ">=0.3.0" },
     { name = "tqdm", specifier = ">=4.68.2" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
 name = "tha-req-runner"
-version = "0.2.7"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/15/032906ce4d8bc7ee11bf898fb4d8ae6f7b7259ccf210d84af54df56432a4/tha_req_runner-0.2.7.tar.gz", hash = "sha256:af769f3dd925084c83c890cb45a98846b4cd825c02828c8a03b84645fa2f50b0", size = 70936, upload-time = "2026-07-05T04:40:18.894Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/87/69aa1098472f822afc1b3f3aa7e8267373e9430c2cad67c63dddb71a0410/tha_req_runner-0.3.0.tar.gz", hash = "sha256:7e9ab1ada47e1e134bf1bb5e952ee51a88a7e6c96995402ef10db4943e713066", size = 72476, upload-time = "2026-09-22T14:18:47.651Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/07/4623118316dd623eab34b5f571a012bf69f8b1f74b3da6f4556f4b2d5fd0/tha_req_runner-0.2.7-py3-none-any.whl", hash = "sha256:b2fad85680dda75423eb87a889db429e7c4c498e844cdb9247771b48ecbd5dfa", size = 7180, upload-time = "2026-07-05T04:40:17.593Z" },
+    { url = "https://files.pythonhosted.org/packages/78/74/b7c6290b405f6a64e9a8830c80a9e5ea1e3bd26f097bc8adb0d957bc7490/tha_req_runner-0.3.0-py3-none-any.whl", hash = "sha256:4333919ef7c459b28b41165112cc09f93c464fa6ad00de3133fd4dca1099a041", size = 7205, upload-time = "2026-09-22T14:18:46.529Z" },
 ]
 
 [[package]]
