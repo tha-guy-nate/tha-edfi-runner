@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+### Added
+- `label` (keyword-only, default `None`) on `batch_post_payload`, `batch_get_by_id`, `get_all`, `batch_get_all`, `batch_delete_by_id`, and `ThaEdfiBase.batch_fetch_tokens`. It replaces the built-in progress text (`"posting payloads"`, `"fetching by id"`, `"fetching tokens"`, ...) so callers can change the wording without losing the step number. `progress_desc="[4/7]", label="Sending mock payloads"` renders `"[4/7]: Sending mock payloads"`.
+
+### Changed
+- **Reverts 0.1.16:** `progress_desc` is a step prefix again, asserted at the front (`progress_desc="[4/7]"` → `"[4/7]: posting payloads"`), instead of the whole label. 0.1.16 used it verbatim so callers could drop the redundant suffix; `label` is the better fix, because callers keep the built-in text when they only pass a step. Callers that adopted 0.1.16 by passing full text (`"[4/7]: Checking token permission"`) will now get the default text appended again; pass `"[4/7]"` and, if the wording should differ, `label="Checking token permission"`.
+- `batch_fetch_tokens` now treats `progress_desc` as a step prefix like every other method. It previously used it verbatim (`progress_desc or "fetching tokens"`), which was inconsistent with the rest of the package.
+- `__version__` is now read from the installed package metadata (`importlib.metadata`) instead of a hardcoded string, so `pyproject.toml` is the only place the version is bumped.
+
 ## [0.1.16] - 2026-09-26
 ### Fixed
 - `progress_desc` on `batch_post_payload`, `batch_get_by_id`, `get_all`, `batch_get_all`, and `batch_delete_by_id` is now used verbatim as the tqdm label. Previously a hardcoded action suffix was always appended (e.g. `"Deleting Ed-Fi student assessments: deleting by id"`), with no way to suppress it. Callers who want a suffix can now compose it themselves; passing `progress_desc=""` gives an unlabelled bar. When `progress_desc` is `None` the built-in default label (`"posting payloads"`, `"fetching by id"`, etc.) is unchanged, matching `batch_fetch_tokens`.

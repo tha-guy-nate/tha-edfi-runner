@@ -8,7 +8,7 @@ from typing import Any, cast
 from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
-from tha_edfi_runner.base import ThaEdfiBase
+from tha_edfi_runner.base import ThaEdfiBase, _compose_label
 from tha_edfi_runner.resources.student_assessment import api
 
 
@@ -115,6 +115,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
         url_col: str = "targetUrl",
@@ -219,7 +220,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = progress_desc if progress_desc is not None else "posting payloads"
+        _label = _compose_label(progress_desc, label, "posting payloads")
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
@@ -289,6 +290,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
         url_col: str = "targetUrl",
@@ -362,7 +364,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = progress_desc if progress_desc is not None else "fetching by id"
+        _label = _compose_label(progress_desc, label, "fetching by id")
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
@@ -393,6 +395,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         limit: int = 500,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
     ) -> dict[str, Any]:
         """Fetch all student assessments for one account, auto-paginating.
 
@@ -403,7 +406,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         offset = 0
 
         _action = "fetching student assessments"
-        _label = progress_desc if progress_desc is not None else _action
+        _label = _compose_label(progress_desc, label, _action)
         progress = tqdm(desc=_label, unit=" items") if show_progress else None
 
         while True:
@@ -450,6 +453,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
         url_col: str = "targetUrl",
@@ -523,7 +527,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return idx, result
 
         _action = "fetching all student assessments"
-        _label = progress_desc if progress_desc is not None else _action
+        _label = _compose_label(progress_desc, label, _action)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
             futures_iter = (
@@ -605,6 +609,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
         url_col: str = "targetUrl",
@@ -698,7 +703,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = progress_desc if progress_desc is not None else "deleting by id"
+        _label = _compose_label(progress_desc, label, "deleting by id")
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (

@@ -1402,7 +1402,7 @@ def test_batch_delete_by_id_expired_token_proactive_refresh():
     mock_refetch.assert_called_once()
 
 
-# --- progress_desc is used verbatim ---
+# --- progress_desc is the step prefix; label overrides the default text ---
 
 PATCH_TQDM = "tha_edfi_runner.resources.student_assessment.runner.tqdm"
 
@@ -1411,12 +1411,14 @@ def _tqdm_desc(mock_tqdm):
     return mock_tqdm.call_args.kwargs["desc"]
 
 
-def _run_progress_call(name, progress_desc):
+def _run_progress_call(name, progress_desc, label=None):
     """Run one progress-emitting runner call with tqdm patched; return the desc it received."""
     runner = make_runner()
     kwargs = {"show_progress": True}
     if progress_desc is not None:
         kwargs["progress_desc"] = progress_desc
+    if label is not None:
+        kwargs["label"] = label
 
     def _fake_tqdm(it=None, **kw):
         return it if it is not None else MagicMock()
@@ -1464,16 +1466,27 @@ _PROGRESS_DEFAULTS = {
 }
 
 
-def test_progress_desc_used_verbatim_without_suffix():
-    for name in _PROGRESS_DEFAULTS:
-        assert _run_progress_call(name, "Custom label") == "Custom label", name
+def test_progress_desc_is_prefix_before_default_text():
+    for name, default in _PROGRESS_DEFAULTS.items():
+        assert _run_progress_call(name, "[4/7]") == f"[4/7]: {default}", name
 
 
-def test_progress_desc_empty_string_is_respected():
+def test_label_replaces_default_text():
     for name in _PROGRESS_DEFAULTS:
-        assert _run_progress_call(name, "") == "", name
+        assert _run_progress_call(name, None, "Sending mock payloads") == "Sending mock payloads"
+
+
+def test_progress_desc_and_label_combine():
+    for name in _PROGRESS_DEFAULTS:
+        got = _run_progress_call(name, "[4/7]", "Sending mock payloads")
+        assert got == "[4/7]: Sending mock payloads", name
 
 
 def test_progress_desc_none_falls_back_to_default_label():
     for name, default in _PROGRESS_DEFAULTS.items():
         assert _run_progress_call(name, None) == default, name
+
+
+def test_empty_progress_desc_adds_no_prefix():
+    for name, default in _PROGRESS_DEFAULTS.items():
+        assert _run_progress_call(name, "") == default, name

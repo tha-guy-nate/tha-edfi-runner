@@ -166,7 +166,8 @@ base.batch_fetch_tokens(
     account_col,                       # deduplication key
     workers=1,
     show_progress=False,
-    progress_desc=None,
+    progress_desc=None,        # step prefix, e.g. "[4/7]" -> "[4/7]: <text>"
+    label=None,                # replaces the default progress text
     skip_statuses=["error", "warning"],
     status_col="row status",
     url_col="targetUrl",
@@ -216,7 +217,8 @@ rows,
 endpoint=...,
 workers=1,
 show_progress=False,
-progress_desc=None,
+progress_desc=None,        # step prefix, e.g. "[4/7]" -> "[4/7]: <text>"
+label=None,                # replaces the default progress text
 skip_statuses=["error", "warning"],
 status_col="row status",
 url_col="targetUrl",
