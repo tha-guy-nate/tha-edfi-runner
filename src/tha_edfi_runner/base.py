@@ -48,6 +48,12 @@ def resolve_api_spec_segment(api_version: str) -> str:
     return raw
 
 
+def _compose_label(prefix: str | None, label: str | None, default: str) -> str:
+    """Build a progress label: ``"<prefix>: <text>"`` where text is ``label`` or ``default``."""
+    text = label if label is not None else default
+    return f"{prefix}: {text}" if prefix else text
+
+
 class ThaEdfiBase:
     """Base class for Ed-Fi resource runners. Holds base_url, auth, and a shared ThaReq instance."""
 
@@ -128,6 +134,7 @@ class ThaEdfiBase:
         workers: int = 1,
         show_progress: bool = False,
         progress_desc: str | None = None,
+        label: str | None = None,
         skip_statuses: list[str] | None = None,
         status_col: str = "row status",
         url_col: str = "targetUrl",
@@ -219,7 +226,7 @@ class ThaEdfiBase:
                 tqdm(
                     as_completed(futures),
                     total=len(futures),
-                    desc=progress_desc or "fetching tokens",
+                    desc=_compose_label(progress_desc, label, "fetching tokens"),
                 )
                 if show_progress
                 else as_completed(futures)

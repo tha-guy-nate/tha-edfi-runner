@@ -326,3 +326,37 @@ def test_batch_fetch_tokens_sets_self_rows():
             rows, oauth_endpoint=OAUTH_ENDPOINT, account_col="District BK"
         )
     assert base.rows is result
+
+
+# --- batch_fetch_tokens progress label ---
+
+
+def _tokens_desc(**kwargs):
+    rows = [_make_auth_row()]
+    with (
+        patch("tha_edfi_runner.base.OAuth2Auth") as MockOAuth,
+        patch("tha_edfi_runner.base.tqdm", side_effect=lambda it=None, **kw: it) as mock_tqdm,
+    ):
+        MockOAuth.return_value.get_token.return_value = "tok"
+        _make_base().batch_fetch_tokens(
+            rows,
+            oauth_endpoint=OAUTH_ENDPOINT,
+            account_col="District BK",
+            show_progress=True,
+            **kwargs,
+        )
+    return mock_tqdm.call_args.kwargs["desc"]
+
+
+def test_batch_fetch_tokens_default_label():
+    assert _tokens_desc() == "fetching tokens"
+
+
+def test_batch_fetch_tokens_progress_desc_is_prefix():
+    assert _tokens_desc(progress_desc="[3/7]") == "[3/7]: fetching tokens"
+
+
+def test_batch_fetch_tokens_label_overrides_text():
+    assert _tokens_desc(progress_desc="[3/7]", label="Fetching Ed-Fi tokens") == (
+        "[3/7]: Fetching Ed-Fi tokens"
+    )
