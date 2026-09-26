@@ -1,5 +1,5 @@
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tha_edfi_runner.base import ThaEdfiBase
 from tha_edfi_runner.resources.student_assessment.runner import (
@@ -1400,3 +1400,80 @@ def test_batch_delete_by_id_expired_token_proactive_refresh():
             commit=True,
         )
     mock_refetch.assert_called_once()
+
+
+# --- progress_desc is used verbatim ---
+
+PATCH_TQDM = "tha_edfi_runner.resources.student_assessment.runner.tqdm"
+
+
+def _tqdm_desc(mock_tqdm):
+    return mock_tqdm.call_args.kwargs["desc"]
+
+
+def _run_progress_call(name, progress_desc):
+    """Run one progress-emitting runner call with tqdm patched; return the desc it received."""
+    runner = make_runner()
+    kwargs = {"show_progress": True}
+    if progress_desc is not None:
+        kwargs["progress_desc"] = progress_desc
+
+    def _fake_tqdm(it=None, **kw):
+        return it if it is not None else MagicMock()
+
+    with patch(PATCH_TQDM, side_effect=_fake_tqdm) as mock_tqdm:
+        if name == "batch_post_payload":
+            with patch(PATCH_RUNNER) as Mock:
+                Mock.return_value.post_payload.return_value = {"key": "dist-1", "status": None}
+                runner.batch_post_payload(
+                    [_make_post_row()],
+                    payload_col="payload",
+                    key_col="District BK",
+                    commit=True,
+                    **kwargs,
+                )
+        elif name == "batch_get_by_id":
+            with patch(PATCH_RUNNER):
+                runner.batch_get_by_id([_make_get_row()], id_col="id", **kwargs)
+        elif name == "batch_delete_by_id":
+            with patch(PATCH_RUNNER) as Mock:
+                Mock.return_value.delete_by_id.return_value = {"id": "rid-1", "status": None}
+                runner.batch_delete_by_id(
+                    [_make_delete_row()],
+                    id_col="edfi_id",
+                    key_col="District BK",
+                    commit=True,
+                    **kwargs,
+                )
+        elif name == "get_all":
+            with patch.object(runner._req, "safe_call", return_value=_ok(data=[])):
+                runner.get_all(key="100", **kwargs)
+        elif name == "batch_get_all":
+            with patch(PATCH_RUNNER) as Mock:
+                Mock.return_value.get_all.return_value = _get_all_ok("100", [])
+                runner.batch_get_all([_batch_row("100")], key_col="District BK", **kwargs)
+    return _tqdm_desc(mock_tqdm)
+
+
+_PROGRESS_DEFAULTS = {
+    "batch_post_payload": "posting payloads",
+    "batch_get_by_id": "fetching by id",
+    "batch_delete_by_id": "deleting by id",
+    "get_all": "fetching student assessments",
+    "batch_get_all": "fetching all student assessments",
+}
+
+
+def test_progress_desc_used_verbatim_without_suffix():
+    for name in _PROGRESS_DEFAULTS:
+        assert _run_progress_call(name, "Custom label") == "Custom label", name
+
+
+def test_progress_desc_empty_string_is_respected():
+    for name in _PROGRESS_DEFAULTS:
+        assert _run_progress_call(name, "") == "", name
+
+
+def test_progress_desc_none_falls_back_to_default_label():
+    for name, default in _PROGRESS_DEFAULTS.items():
+        assert _run_progress_call(name, None) == default, name

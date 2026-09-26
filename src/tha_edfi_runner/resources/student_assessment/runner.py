@@ -219,7 +219,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = f"{progress_desc}: posting payloads" if progress_desc else "posting payloads"
+        _label = progress_desc if progress_desc is not None else "posting payloads"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
@@ -362,7 +362,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = f"{progress_desc}: fetching by id" if progress_desc else "fetching by id"
+        _label = progress_desc if progress_desc is not None else "fetching by id"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
@@ -403,7 +403,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         offset = 0
 
         _action = "fetching student assessments"
-        _label = f"{progress_desc}: {_action}" if progress_desc else _action
+        _label = progress_desc if progress_desc is not None else _action
         progress = tqdm(desc=_label, unit=" items") if show_progress else None
 
         while True:
@@ -523,7 +523,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return idx, result
 
         _action = "fetching all student assessments"
-        _label = f"{progress_desc}: {_action}" if progress_desc else _action
+        _label = progress_desc if progress_desc is not None else _action
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
             futures_iter = (
@@ -698,7 +698,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
             return idx, result
 
-        _label = f"{progress_desc}: deleting by id" if progress_desc else "deleting by id"
+        _label = progress_desc if progress_desc is not None else "deleting by id"
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
             futures_iter = (
