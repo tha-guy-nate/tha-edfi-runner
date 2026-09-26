@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-09-26
+### Fixed
+- `progress_desc` on `batch_post_payload`, `batch_get_by_id`, `get_all`, `batch_get_all`, and `batch_delete_by_id` is now used verbatim as the tqdm label. Previously a hardcoded action suffix was always appended (e.g. `"Deleting Ed-Fi student assessments: deleting by id"`), with no way to suppress it. Callers who want a suffix can now compose it themselves; passing `progress_desc=""` gives an unlabelled bar. When `progress_desc` is `None` the built-in default label (`"posting payloads"`, `"fetching by id"`, etc.) is unchanged, matching `batch_fetch_tokens`.
+
 ## [0.1.15] - 2026-09-22
 ### Changed
 - Bumped dep floor: tha-req-runner>=0.3.0 (was >=0.2.7). Hygiene bump only — this repo doesn't use the `httpx`/`httpx2` extra, just keeping current with tha-req-runner's latest release.
