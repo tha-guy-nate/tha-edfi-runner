@@ -1187,13 +1187,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "deptry", marker = "extra == 'dev'", specifier = "==0.25.1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.4.0" },
-    { name = "pip-audit", marker = "extra == 'dev'", specifier = "==2.10.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = "==7.1.0" },
-    { name = "responses", marker = "extra == 'dev'", specifier = "==0.26.3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.10" },
+    { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
+    { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
+    { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "tha-req-runner", specifier = "==0.3.0" },
     { name = "tqdm", specifier = "==4.70.1" },
 ]
