@@ -1194,22 +1194,22 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.1.0" },
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "tha-req-runner", specifier = "==0.3.0" },
+    { name = "tha-req-runner", specifier = "==0.4.0" },
     { name = "tqdm", specifier = "==4.70.1" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
 name = "tha-req-runner"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/87/69aa1098472f822afc1b3f3aa7e8267373e9430c2cad67c63dddb71a0410/tha_req_runner-0.3.0.tar.gz", hash = "sha256:7e9ab1ada47e1e134bf1bb5e952ee51a88a7e6c96995402ef10db4943e713066", size = 72476, upload-time = "2026-09-22T14:18:47.651Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/2e/8a078ecf05f4d13b49ae2bba1d4c9648d0fc46c4865e66311dab4ae231f8/tha_req_runner-0.4.0.tar.gz", hash = "sha256:cb8da4793e6ccd4491af2883f3d41558a1d9e69ecf6acf52173478040a7c0d7f", size = 91359, upload-time = "2026-10-04T03:23:49.738Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/74/b7c6290b405f6a64e9a8830c80a9e5ea1e3bd26f097bc8adb0d957bc7490/tha_req_runner-0.3.0-py3-none-any.whl", hash = "sha256:4333919ef7c459b28b41165112cc09f93c464fa6ad00de3133fd4dca1099a041", size = 7205, upload-time = "2026-09-22T14:18:46.529Z" },
+    { url = "https://files.pythonhosted.org/packages/27/3a/74af64408b4d42b8814a3b07e9ee83fcf91979ddef20e6e849518e8bbdcd/tha_req_runner-0.4.0-py3-none-any.whl", hash = "sha256:11a8df40bf43120ddcd667ce54b3fb85fc007ebe471219cedc565875314fdb77", size = 7228, upload-time = "2026-10-04T03:23:47.734Z" },
 ]
 
 [[package]]

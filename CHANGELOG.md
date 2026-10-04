@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-10-02
 ### Changed
-- Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `tha-req-runner==0.3.0`, `tqdm==4.70.1`.
+- Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `tha-req-runner==0.4.0`, `tqdm==4.70.1`.
 
 ## [0.2.0] - 2026-09-26
 ### Added
