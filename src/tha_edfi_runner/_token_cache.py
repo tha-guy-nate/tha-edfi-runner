@@ -11,7 +11,7 @@ from tha_edfi_runner.base import ThaEdfiBase
 
 _MAX_REFRESH_FAILURES = 3
 _REFRESH_BACKOFF = 1.0  # seconds before the 2nd attempt, doubled after each failure
-_REFRESH_COOLDOWN = 30.0  # seconds a client's refreshes pause after hitting the cap
+DEFAULT_REFRESH_COOLDOWN = 30.0  # seconds a client's refreshes pause after hitting the cap
 
 
 class TokenFetch(NamedTuple):
@@ -71,11 +71,11 @@ class _Client:
             return None
         return self.token
 
-    def fail(self, reason: str) -> None:
+    def fail(self, reason: str, cooldown: float) -> None:
         self.failures += 1
         self.last_error = reason
         if self.failures >= _MAX_REFRESH_FAILURES:
-            self.paused_until = time.monotonic() + _REFRESH_COOLDOWN
+            self.paused_until = time.monotonic() + cooldown
             self.pauses += 1
 
 
@@ -85,7 +85,8 @@ class TokenCache:
     Keyed by ``(base_url, client_id)``. A per-client lock makes a refresh single-flight:
     a worker that waited on the lock re-checks the cache and reuses another worker's
     token. Consecutive failures back off (1s, 2s); at the cap, refreshes for that client
-    pause for ``_REFRESH_COOLDOWN`` seconds, then one attempt is allowed again. During
+    pause for ``cooldown`` seconds, then one attempt is allowed again (``cooldown=0``
+    never pauses: every refresh after the cap is attempted). During
     the first pause, rows wait it out (outside the lock) instead of failing, so a short
     throttle delays the batch without losing rows; if the attempt after that pause fails
     too, later pauses fail rows fast. The count resets only when the ODS accepts a
@@ -93,9 +94,16 @@ class TokenCache:
     hit the cap.
     """
 
-    def __init__(self, *, oauth_endpoint: str, backend: Backend) -> None:
+    def __init__(
+        self,
+        *,
+        oauth_endpoint: str,
+        backend: Backend,
+        cooldown: float = DEFAULT_REFRESH_COOLDOWN,
+    ) -> None:
         self._oauth_endpoint = oauth_endpoint
         self._backend = backend
+        self._cooldown = cooldown
         self._guard = threading.Lock()
         self._clients: dict[tuple[str, str], _Client] = {}
 
@@ -126,7 +134,7 @@ class TokenCache:
             client.rejected.add(token)
             if client.token == token:
                 client.token = None
-                client.fail("refreshed token was rejected: auth error: HTTP 401")
+                client.fail("refreshed token was rejected: auth error: HTTP 401", self._cooldown)
 
     def confirm(self, base_url: str, client_id: str, token: str) -> None:
         """Record that the ODS accepted the cached ``token``; resets the failure count."""
@@ -171,7 +179,7 @@ class TokenCache:
             time.sleep(_REFRESH_BACKOFF * 2 ** (client.failures - 1))
         got = fetch_token(base_url, client_id, secret, self._oauth_endpoint, self._backend)
         if got.token is None:
-            client.fail(got.error or "token fetch failed")
+            client.fail(got.error or "token fetch failed", self._cooldown)
             return None, client.last_error
         client.token, client.expires_at = got.token, got.expires_at
         return got.token, None

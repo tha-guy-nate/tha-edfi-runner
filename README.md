@@ -145,15 +145,16 @@ ThaEdfiBase(
     client_secret=None,
     token_url=None,
     bearer_token=None,
-    backend="requests",   # or "httpx2"
-    req=None,             # share an existing ThaReq (and its sessions); its backend wins
+    backend=None,         # "requests" (default) or "httpx2"
+    req=None,             # share an existing ThaReq (and its per-thread sessions)
 )
 ```
 
 `backend` picks the HTTP client used for every Ed-Fi and OAuth call, including the
 per-row instances the batch methods create. `"requests"` is the default. `"httpx2"`
 needs the `[httpx2]` extra and raises `ImportError` with the install command if it
-is missing. Only the `requests` backend retries 5xx responses at the transport
+is missing. With `req=`, `backend` can be left out (the req's backend is used);
+passing a `backend` that differs from the req's raises `EdfiError`. Only the `requests` backend retries 5xx responses at the transport
 level, and only for GET/DELETE (never POST); the `httpx2` backend retries connection
 failures only.
 
@@ -281,6 +282,7 @@ auth_key_col=None,              # enable reactive re-auth on 401
 auth_secret_col=None,
 oauth_endpoint=None,
 expires_col=None,               # enable proactive re-auth before token expiry
+refresh_cooldown=30.0,          # seconds refreshes pause after 3 failures; 0 = never pause
 row_id_col=None,                # column echoed onto each result as `row_id`
 ```
 
@@ -333,7 +335,7 @@ Refresh failures show up in the row message:
   `oauth_endpoint` isn't set).
 
 Failed refreshes for a client back off (1s, then 2s). After 3 failures in a row,
-refreshes for that client pause for 30 seconds:
+refreshes for that client pause for `refresh_cooldown` seconds (30 by default):
 
 - **First pause:** rows wait it out instead of failing, then one refresh is tried. If it
   works, the batch carries on with the new token, so a short throttle delays the batch
@@ -342,6 +344,9 @@ refreshes for that client pause for 30 seconds:
   for that client fail fast during each pause with
   `(refresh paused <n>s after <n> failed refreshes)`, and one refresh is tried after
   each pause. Rerun those rows once the token endpoint or credentials are fixed.
+- **`refresh_cooldown=0`** never pauses: every row after the third failure tries its own
+  refresh, so the batch keeps going without waiting but can hit the token endpoint once
+  per row while it's failing. A longer value waits longer before the next attempt.
 
 A refreshed token that Ed-Fi rejects with a 401 counts as a failed refresh, so
 credentials that get unusable tokens hit the same limit. The count resets once Ed-Fi

@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
 from tha_edfi_runner._backend import BatchReq, make_batch_req
-from tha_edfi_runner._token_cache import TokenCache, is_expired
+from tha_edfi_runner._token_cache import DEFAULT_REFRESH_COOLDOWN, TokenCache, is_expired
 from tha_edfi_runner.auth import _http_status_text
 from tha_edfi_runner.base import ThaEdfiBase, _compose_label
 from tha_edfi_runner.errors import EdfiError
@@ -48,6 +48,11 @@ def _validate_status_handling(
         raise EdfiError(f"max_retries must be >= 0, got {max_retries}")
     if retry_backoff < 0:
         raise EdfiError(f"retry_backoff must be >= 0, got {retry_backoff}")
+
+
+def _validate_cooldown(refresh_cooldown: float) -> None:
+    if not refresh_cooldown >= 0:  # also rejects NaN
+        raise EdfiError(f"refresh_cooldown must be >= 0, got {refresh_cooldown}")
 
 
 def _reauth_gap(
@@ -141,10 +146,10 @@ def _row_ids(rows: list[dict[str, Any]], col: str | None) -> list[str] | None:
 class ThaStudentAssessment(ThaEdfiBase):
     """Ed-Fi student assessment resource runner."""
 
-    def _token_cache(self, oauth_endpoint: str | None) -> TokenCache | None:
+    def _token_cache(self, oauth_endpoint: str | None, cooldown: float) -> TokenCache | None:
         if not oauth_endpoint:
             return None
-        return TokenCache(oauth_endpoint=oauth_endpoint, backend=self.backend)
+        return TokenCache(oauth_endpoint=oauth_endpoint, backend=self.backend, cooldown=cooldown)
 
     def _call_with_reauth(
         self,
@@ -331,6 +336,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
         commit: bool = False,
         retry_statuses: Collection[int] | None = None,
@@ -357,6 +363,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         Retry/allow options and ``correlation_id``: see ``post_payload``.
         """
         _validate_status_handling(retry_statuses, max_retries, retry_backoff)
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
@@ -378,7 +385,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return out
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
-        cache = self._token_cache(oauth_endpoint)
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
         req = make_batch_req(self.backend)
         status_handling: dict[str, Any] = {
             "retry_statuses": retry_statuses,
@@ -518,6 +525,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
     ) -> list[dict[str, Any]]:
         """GET each row's student assessment by ID using per-row credentials.
@@ -532,12 +540,13 @@ class ThaStudentAssessment(ThaEdfiBase):
         independent of ``row_index``. ``row_id`` is ``None`` on every result when
         ``row_id_col`` is not set.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
-        cache = self._token_cache(oauth_endpoint)
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
         req = make_batch_req(self.backend)
 
         def _get(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -691,6 +700,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
     ) -> list[dict[str, Any]]:
         """Fetch all student assessments across multiple accounts, returning a flat list.
 
@@ -698,6 +708,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         to expand_rows to join back to rows.
         Error accounts contribute a single {key_col, status, message} placeholder to the flat list.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -710,7 +721,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 deduped.append(row)
 
         account_results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(deduped))
-        cache = self._token_cache(oauth_endpoint)
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
         req = make_batch_req(self.backend)
 
         def _fetch(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -849,6 +860,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
         commit: bool = False,
     ) -> list[dict[str, Any]]:
@@ -864,6 +876,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         independent of ``row_index``. ``row_id`` is ``None`` on every result when
         ``row_id_col`` is not set.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
@@ -886,7 +899,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return out
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
-        cache = self._token_cache(oauth_endpoint)
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
         req = make_batch_req(self.backend)
 
         def _delete(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:

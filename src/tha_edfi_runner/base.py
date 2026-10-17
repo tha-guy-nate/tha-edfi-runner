@@ -7,7 +7,7 @@ from typing import Any
 from tha_req_runner.runner import ThaReq
 from tqdm import tqdm
 
-from tha_edfi_runner._backend import Backend, make_req
+from tha_edfi_runner._backend import Backend, make_req, resolve_backend
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
 from tha_edfi_runner.errors import EdfiError
 
@@ -72,12 +72,14 @@ class ThaEdfiBase:
         # Basic auth (not yet implemented — placeholder)
         username: str | None = None,
         password: str | None = None,
-        # HTTP backend: "requests" (default) or "httpx2" (needs the [httpx2] extra)
-        backend: Backend = "requests",
-        # Share an existing ThaReq (and its per-thread sessions) instead of a new one;
-        # its own backend is used.
+        # HTTP backend: "requests" or "httpx2" (needs the [httpx2] extra). None means
+        # the shared req's backend, or "requests" when there is no req.
+        backend: Backend | None = None,
+        # Share an existing ThaReq (and its per-thread sessions) instead of a new one.
+        # Passing a backend that differs from the req's raises EdfiError.
         req: ThaReq | None = None,
     ) -> None:
+        backend = resolve_backend(backend, req)
         self.backend: Backend = backend
         self.base_url = base_url.rstrip("/")
         # `api_version` is the URL spec segment (e.g. "v3"), not an ODS/API product

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from tha_req_runner.runner import ThaReq
 
@@ -40,6 +40,19 @@ class BatchReq(ThaReq):
                 session.close()
             except Exception:
                 pass
+
+
+def resolve_backend(backend: Backend | None, req: ThaReq | None) -> Backend:
+    """The backend to use: ``backend`` if given, else the shared ``req``'s, else requests.
+
+    Raises if both are given and disagree, so ``self.backend`` always matches the client.
+    """
+    shared = getattr(req, "_backend", None) if req is not None else None
+    if backend is None:
+        return cast(Backend, shared) if shared in _BACKENDS else "requests"
+    if shared is not None and shared != backend:
+        raise EdfiError(f"backend={backend!r} doesn't match the shared req's backend {shared!r}")
+    return backend
 
 
 def make_req(backend: Backend) -> ThaReq:

@@ -439,3 +439,52 @@ def test_fetch_token_reads_wall_clock_expiry_from_oauth():
         got = fetch_token(BASE_URL, "c", "s", "/oauth/token", "httpx2")
     assert got == TokenFetch("t", 1234.5, None)
     assert MockBase.call_args.kwargs["token_url"] == f"{BASE_URL}/oauth/token"
+
+
+# --- refresh_cooldown ---
+
+
+def test_custom_cooldown_is_used():
+    server = FakeServer(valid={"new"})
+    fetches = [TokenFetch(None, None, "HTTP 429")] * 3 + [TokenFetch("new", None, None)]
+    with (
+        fake_time() as clock,
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, side_effect=fetches),
+    ):
+        results = _post([_row() for _ in range(5)], refresh_cooldown=5)
+    assert clock.sleeps == [1.0, 2.0, 5.0]
+    assert [r["status"] for r in results[3:]] == [None, None]
+
+
+def test_zero_cooldown_never_pauses():
+    server = FakeServer(valid=set())
+    with (
+        fake_time() as clock,
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")) as fetch,
+    ):
+        results = _post([_row() for _ in range(6)], refresh_cooldown=0)
+    # Every row tries its own refresh; back-off only before the cap.
+    assert fetch.call_count == 6
+    assert clock.sleeps == [1.0, 2.0]
+    assert all(r["message"].endswith("auth refresh failed: HTTP 429") for r in results)
+    assert not any("paused" in r["message"] for r in results)
+
+
+@pytest.mark.parametrize("bad", [-1, float("nan")])
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("batch_post_payload", {"payload_col": "payload", "key_col": "District BK"}),
+        ("batch_get_by_id", {"id_col": "payload"}),
+        ("batch_get_all", {"key_col": "District BK"}),
+        ("batch_delete_by_id", {"id_col": "payload", "key_col": "District BK"}),
+    ],
+)
+def test_invalid_cooldown_raises(method, kwargs, bad):
+    from tha_edfi_runner.errors import EdfiError
+
+    runner = ThaStudentAssessment(base_url=BASE_URL, bearer_token="unused")
+    with pytest.raises(EdfiError, match="refresh_cooldown"):
+        getattr(runner, method)([_row()], refresh_cooldown=bad, **kwargs)

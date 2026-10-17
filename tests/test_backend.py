@@ -284,3 +284,33 @@ def test_req_keyword_shares_a_thareq():
     b = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN, req=shared)
     assert a._req is shared and b._req is shared
     assert a._session() is b._session()
+
+
+# --- backend vs a shared req ---
+
+
+def test_backend_defaults_to_the_shared_reqs():
+    from tha_edfi_runner._backend import make_req
+
+    base = ThaEdfiBase(base_url=BASE_URL, bearer_token=TOKEN, req=make_req("httpx2"))
+    assert base.backend == "httpx2"
+    assert isinstance(base._session(), httpx2.Client)
+
+
+def test_matching_backend_and_req_is_fine():
+    from tha_edfi_runner._backend import make_req
+
+    base = ThaEdfiBase(base_url=BASE_URL, backend="httpx2", req=make_req("httpx2"))
+    assert base.backend == "httpx2"
+
+
+def test_backend_that_disagrees_with_req_raises():
+    from tha_edfi_runner._backend import make_req
+
+    with pytest.raises(EdfiError, match="doesn't match the shared req's backend 'httpx2'"):
+        ThaEdfiBase(base_url=BASE_URL, backend="requests", req=make_req("httpx2"))
+
+
+def test_req_without_a_backend_attribute_falls_back_to_requests():
+    base = ThaEdfiBase(base_url=BASE_URL, req=MagicMock(spec=[]))
+    assert base.backend == "requests"
