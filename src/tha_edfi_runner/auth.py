@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from http import HTTPStatus
 from typing import Any
 
 from tha_req_runner.runner import ThaReq
@@ -10,6 +11,14 @@ from tha_edfi_runner._backend import Backend, make_req
 from tha_edfi_runner.errors import EdfiError
 
 _TOKEN_EXPIRY_BUFFER = 60  # seconds before expiry to proactively refresh
+
+
+def _http_status_text(code: int) -> str:
+    """``"HTTP 400 Bad Request"``; just ``"HTTP <code>"`` for a nonstandard code."""
+    try:
+        return f"HTTP {code} {HTTPStatus(code).phrase}"
+    except ValueError:
+        return f"HTTP {code}"
 
 
 class OAuth2Auth:
@@ -54,7 +63,7 @@ class OAuth2Auth:
         )
         if result["status"] == "error" or not isinstance(result["data"], dict):
             code = result["code"]
-            reason = f"HTTP {code}" if isinstance(code, int) else result["message"]
+            reason = _http_status_text(code) if isinstance(code, int) else result["message"]
             raise EdfiError(f"OAuth2 token fetch failed: {reason}")
         data: dict[str, Any] = result["data"]
         token = data.get("access_token")

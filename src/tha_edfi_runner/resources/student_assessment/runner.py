@@ -9,7 +9,9 @@ from typing import Any, cast
 from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
+from tha_edfi_runner._backend import BatchReq, make_batch_req
 from tha_edfi_runner._token_cache import TokenCache, is_expired
+from tha_edfi_runner.auth import _http_status_text
 from tha_edfi_runner.base import ThaEdfiBase, _compose_label
 from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment import api
@@ -70,7 +72,7 @@ def _reauth_gap(
 
 
 def _error_msg(result: dict[str, Any]) -> str:
-    """``"HTTP <code>"`` for an HTTP error, so the text doesn't depend on the backend.
+    """``"HTTP <code> <reason>"`` for an HTTP error, so the text doesn't depend on the backend.
 
     Only a failure with no response (e.g. a connection error) keeps the library's text.
     """
@@ -78,7 +80,7 @@ def _error_msg(result: dict[str, Any]) -> str:
     if code == 401:
         return "auth error: HTTP 401"
     if isinstance(code, int):
-        return f"HTTP {code}"
+        return _http_status_text(code)
     return result.get("message") or "request failed"
 
 
@@ -156,47 +158,61 @@ class ThaStudentAssessment(ThaEdfiBase):
         oauth_endpoint: str | None,
         expires_col: str | None,
         cache: TokenCache | None,
+        req: BatchReq,
         call: Callable[[ThaStudentAssessment], dict[str, Any]],
         error: Callable[[str], dict[str, Any]],
     ) -> dict[str, Any]:
         """Run ``call`` for one batch row, refreshing the token through the batch's cache.
 
-        Proactive: a fresh cached token wins over the row's; an expired ``expires_col``
-        refreshes first, and a failed refresh fails the row without using the stale token.
+        Proactive: a fresh cached token wins over the row's. A row token that expired
+        (``expires_col``) or already got a 401 is refreshed first, and if that fails the
+        row fails without sending the stale token.
         Reactive: a 401 refreshes once (shared across workers) and repeats ``call``.
+        Every call goes through the batch's shared ``req`` (one session per worker).
         """
         gap = _reauth_gap(row, auth_key_col, auth_secret_col, oauth_endpoint)
         client_id = str(row.get(auth_key_col) or "").strip() if auth_key_col else ""
         secret = str(row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
 
         def run(tok: str) -> dict[str, Any]:
-            return call(
-                ThaStudentAssessment(
-                    base_url=base_url,
-                    bearer_token=tok,
-                    api_version=api_version,
-                    backend=self.backend,
-                )
+            instance = ThaStudentAssessment(
+                base_url=base_url,
+                bearer_token=tok,
+                api_version=api_version,
+                backend=self.backend,
             )
+            instance._req = req
+            return call(instance)
 
+        from_cache = False
         if gap is None and cache is not None:
             cached = cache.current(base_url, client_id)
             if cached is not None:
-                token = cached
-            elif expires_col and is_expired(row.get(expires_col)):
+                token, from_cache = cached, True
+            elif (expires_col and is_expired(row.get(expires_col))) or cache.is_rejected(
+                base_url, client_id, token
+            ):
                 fresh, reason = cache.refresh(base_url, client_id, secret, stale_token=token)
                 if fresh is None:
                     return error(f"auth refresh failed: {reason}")
-                token = fresh
+                token, from_cache = fresh, True
 
         result = run(token)
         if not _is_401(result):
+            if from_cache and cache is not None:
+                cache.confirm(base_url, client_id, token)
             return result
         if gap is None and cache is not None:
+            cache.reject(base_url, client_id, token)
             fresh, reason = cache.refresh(base_url, client_id, secret, stale_token=token)
             if fresh is None:
                 return {**result, "message": f"{result['message']}; auth refresh failed: {reason}"}
-            return run(fresh)
+            result = run(fresh)
+            if _is_401(result):
+                cache.reject(base_url, client_id, fresh)
+            else:
+                cache.confirm(base_url, client_id, fresh)
+            return result
         if gap:
             return {**result, "message": f"{result['message']} (re-auth not possible: {gap})"}
         return result
@@ -363,6 +379,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
         cache = self._token_cache(oauth_endpoint)
+        req = make_batch_req(self.backend)
         status_handling: dict[str, Any] = {
             "retry_statuses": retry_statuses,
             "retry_messages": retry_messages,
@@ -406,6 +423,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 oauth_endpoint=oauth_endpoint,
                 expires_col=expires_col,
                 cache=cache,
+                req=req,
                 call=lambda inst: inst.post_payload(
                     payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
                 ),
@@ -414,24 +432,27 @@ class ThaStudentAssessment(ThaEdfiBase):
             return idx, result
 
         _label = _compose_label(progress_desc, label, "posting payloads")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results
@@ -517,6 +538,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
         cache = self._token_cache(oauth_endpoint)
+        req = make_batch_req(self.backend)
 
         def _get(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -543,6 +565,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 oauth_endpoint=oauth_endpoint,
                 expires_col=expires_col,
                 cache=cache,
+                req=req,
                 call=lambda inst: inst.get_by_id(resource_id, endpoint=endpoint),
                 error=lambda msg: {
                     "id": resource_id,
@@ -554,24 +577,27 @@ class ThaStudentAssessment(ThaEdfiBase):
             return idx, result
 
         _label = _compose_label(progress_desc, label, "fetching by id")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results
@@ -685,6 +711,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         account_results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(deduped))
         cache = self._token_cache(oauth_endpoint)
+        req = make_batch_req(self.backend)
 
         def _fetch(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             key_val = str(row.get(key_col) or "").strip()
@@ -708,6 +735,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 oauth_endpoint=oauth_endpoint,
                 expires_col=expires_col,
                 cache=cache,
+                req=req,
                 call=lambda inst: inst.get_all(
                     key=key_val, endpoint=endpoint, params=params, limit=limit
                 ),
@@ -717,20 +745,23 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         _action = "fetching all student assessments"
         _label = _compose_label(progress_desc, label, _action)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, out = future.result()
-                account_results[idx] = out
+                for future in futures_iter:
+                    idx, out = future.result()
+                    account_results[idx] = out
+        finally:
+            req.close_all()
 
         flat: list[dict[str, Any]] = []
         for result in account_results:
@@ -856,6 +887,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
         cache = self._token_cache(oauth_endpoint)
+        req = make_batch_req(self.backend)
 
         def _delete(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -883,6 +915,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 oauth_endpoint=oauth_endpoint,
                 expires_col=expires_col,
                 cache=cache,
+                req=req,
                 call=lambda inst: inst.delete_by_id(
                     resource_id, key=key_val, endpoint=endpoint, commit=True
                 ),
@@ -896,24 +929,29 @@ class ThaStudentAssessment(ThaEdfiBase):
             return idx, result
 
         _label = _compose_label(progress_desc, label, "deleting by id")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)
+                }
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results

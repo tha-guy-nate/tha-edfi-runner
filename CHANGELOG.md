@@ -13,16 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[httpx2]` extra (`pip install "tha-edfi-runner[httpx2]"`), which installs `tha-req-runner[httpx2]`. Choosing `backend="httpx2"` without it raises `ImportError` with the install command. An unknown backend raises `EdfiError`.
 
 ### Changed
-- Error messages now start with `HTTP <code>` instead of the HTTP library's exception text, so they read the same on both backends: `"HTTP 400: <Ed-Fi detail>"` rather than `"400 Client Error: Bad Request for url: ..."` (requests) or httpx2's multi-line `"Client error '400 Bad Request' ..."`. This applies to `post_payload`, `get_by_id`, `get_all` (`"GET <endpoint> failed: HTTP <code>"`), `delete_by_id`, and OAuth token fetch failures. A 401 is still `"auth error: HTTP 401"`, and a failure with no response, such as a connection error, keeps the library's text. Callers matching on the old `"400 Client Error"` text should match on `"HTTP 400"`.
-- `get_by_id` and `delete_by_id` error messages now include the Ed-Fi detail from the response body, like `post_payload` (`"HTTP 409: <detail>"`).
+- Error messages now start with `HTTP <code> <reason>` instead of the HTTP library's exception text, so they read the same on both backends: `"HTTP 400 Bad Request: <Ed-Fi detail>"` rather than `"400 Client Error: Bad Request for url: ..."` (requests) or httpx2's multi-line `"Client error '400 Bad Request' ..."`. This applies to `post_payload`, `get_by_id`, `get_all` (`"GET <endpoint> failed: HTTP 404 Not Found"`), `delete_by_id`, and OAuth token fetch failures. The reason phrase is the standard one for the code (a nonstandard code gives just `"HTTP <code>"`). A 401 is still `"auth error: HTTP 401"`, and a failure with no response, such as a connection error, keeps the library's text. Callers matching on the old `"400 Client Error"` text should match on `"HTTP 400"`.
+- `get_by_id` and `delete_by_id` error messages now include the Ed-Fi detail from the response body, like `post_payload` (`"HTTP 409 Conflict: <detail>"`).
 
 ### Fixed
 - Batch re-auth (`batch_post_payload`, `batch_get_by_id`, `batch_get_all`, `batch_delete_by_id`) no longer breaks down after a token expires mid-batch. Before, a refreshed token was used for one row only, so every later row refreshed again (one token request per row from every worker), and a failed refresh was silent: the row kept the stale token and reported a plain 401. Now:
   - A refreshed token is cached per batch call, keyed by `(base_url, client id)`, and used by every later row and worker. Concurrent refreshes for the same client make one token request.
   - A failed refresh puts its reason in the row message: `"auth refresh failed: <reason>"` (proactive; the call is not sent with the expired token) or `"auth error: HTTP 401; auth refresh failed: <reason>"` (after a 401).
-  - After 3 consecutive failed refreshes for a client (1s then 2s back-off), that client fails fast for the rest of the batch with `(gave up after 3 failed refreshes)`.
+  - Failed refreshes for a client back off (1s, then 2s). After 3 in a row, refreshes for that client pause for 30 seconds and its rows fail fast with `(refresh paused <n>s after 3 failed refreshes)`. After the pause one refresh is tried again, so a short throttle doesn't fail the rest of the batch. The count resets only once Ed-Fi accepts a refreshed token, and a refreshed token that gets a 401 counts as a failure, so credentials that get unusable tokens don't refresh once per row.
+  - A row whose token already got a 401 in the batch refreshes before its call instead of sending that token again. If the refresh fails, the row fails with `http_status=None` and no request is sent.
   - A 401 on a row that can't re-auth, although re-auth is configured, says why, e.g. `"(re-auth not possible: empty 'oAuthKey')"`.
   - `expires_col` values that are numeric strings now trigger the proactive refresh. Before, only `int`/`float` did.
+- Batch methods reuse one HTTP session per worker thread instead of opening a new one for every row (a new connection and TLS handshake per row, never closed). Sessions are closed when the batch call returns, and token fetches close theirs. This also applied in 0.4.0 and earlier.
 
 ## [0.4.0] - 2026-10-17
 ### Added

@@ -92,7 +92,7 @@ def test_post_payload_error_response():
         result = runner.post_payload({"id": "1"}, key="dist-1", commit=True)
     assert result["status"] == "error"
     # The library's exception text is replaced by the backend-neutral "HTTP <code>".
-    assert result["message"] == "HTTP 400"
+    assert result["message"] == "HTTP 400 Bad Request"
     assert result["key"] == "dist-1"
 
 
@@ -870,7 +870,7 @@ def test_delete_by_id_error():
     with patch.object(runner._req, "safe_call", return_value=_err(404, "not found")):
         result = runner.delete_by_id("missing", key="dist-1", commit=True)
     assert result["status"] == "error"
-    assert result["message"] == "HTTP 404"
+    assert result["message"] == "HTTP 404 Not Found"
     assert result["key"] == "dist-1"
 
 

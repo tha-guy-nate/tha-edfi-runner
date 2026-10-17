@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 from tha_edfi_runner._backend import Backend
@@ -9,6 +11,7 @@ from tha_edfi_runner.base import ThaEdfiBase
 
 _MAX_REFRESH_FAILURES = 3
 _REFRESH_BACKOFF = 1.0  # seconds before the 2nd attempt, doubled after each failure
+_REFRESH_COOLDOWN = 30.0  # seconds a client's refreshes pause after hitting the cap
 
 
 class TokenFetch(NamedTuple):
@@ -28,10 +31,15 @@ def fetch_token(
         token_url=f"{base_url}/{oauth_endpoint.lstrip('/')}",
         backend=backend,
     )
-    result = instance.fetch_token()
+    try:
+        result = instance.fetch_token()
+        exp = getattr(instance._auth, "expires_at", None)
+    finally:
+        auth_req = getattr(instance._auth, "_req", None)
+        if auth_req is not None:
+            auth_req.close_session()
     if result["status"] is not None or not result["token"]:
         return TokenFetch(None, None, result["message"] or "token fetch failed")
-    exp = getattr(instance._auth, "expires_at", None)
     return TokenFetch(result["token"], exp if isinstance(exp, float) and exp > 0 else None, None)
 
 
@@ -45,64 +53,107 @@ def is_expired(value: Any) -> bool:
         return False
 
 
+@dataclass
+class _Client:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    token: str | None = None
+    expires_at: float | None = None
+    rejected: set[str] = field(default_factory=set)
+    failures: int = 0
+    last_error: str = "token fetch failed"
+    paused_until: float = 0.0  # time.monotonic()
+
+    def fresh(self) -> str | None:
+        if self.token is None:
+            return None
+        if self.expires_at is not None and time.time() >= self.expires_at:
+            return None
+        return self.token
+
+    def fail(self, reason: str) -> None:
+        self.failures += 1
+        self.last_error = reason
+        if self.failures >= _MAX_REFRESH_FAILURES:
+            self.paused_until = time.monotonic() + _REFRESH_COOLDOWN
+
+
 class TokenCache:
     """Refreshed tokens for one batch call, shared by all its workers.
 
-    Keyed by ``(base_url, client_id)``. A per-key lock makes a refresh single-flight: a
-    worker that waited on the lock re-checks the cache and reuses another worker's token.
-    After ``_MAX_REFRESH_FAILURES`` consecutive failures a key fails fast for the rest of
-    the batch.
+    Keyed by ``(base_url, client_id)``. A per-client lock makes a refresh single-flight:
+    a worker that waited on the lock re-checks the cache and reuses another worker's
+    token. Consecutive failures back off (1s, 2s); at the cap, refreshes for that client
+    pause for ``_REFRESH_COOLDOWN`` seconds, then one attempt is allowed again. The count
+    resets only when the ODS accepts a refreshed token (``confirm``), so credentials that
+    get tokens the ODS rejects still hit the cap.
     """
 
     def __init__(self, *, oauth_endpoint: str, backend: Backend) -> None:
         self._oauth_endpoint = oauth_endpoint
         self._backend = backend
         self._guard = threading.Lock()
-        self._locks: dict[tuple[str, str], threading.Lock] = {}
-        self._tokens: dict[tuple[str, str], tuple[str, float | None]] = {}
-        self._failures: dict[tuple[str, str], int] = {}
-        self._last_error: dict[tuple[str, str], str] = {}
+        self._clients: dict[tuple[str, str], _Client] = {}
 
-    def _fresh(self, key: tuple[str, str]) -> str | None:
-        entry = self._tokens.get(key)
-        if entry is None:
-            return None
-        token, expires_at = entry
-        return None if expires_at is not None and time.time() >= expires_at else token
+    def _client(self, base_url: str, client_id: str) -> _Client:
+        with self._guard:
+            return self._clients.setdefault((base_url, client_id), _Client())
 
     def current(self, base_url: str, client_id: str) -> str | None:
         """A cached, unexpired token for this client, or None."""
-        with self._guard:
-            return self._fresh((base_url, client_id))
+        client = self._client(base_url, client_id)
+        with client.lock:
+            return client.fresh()
+
+    def is_rejected(self, base_url: str, client_id: str, token: str) -> bool:
+        """True if ``token`` already got a 401 for this client in this batch."""
+        client = self._client(base_url, client_id)
+        with client.lock:
+            return token in client.rejected
+
+    def reject(self, base_url: str, client_id: str, token: str) -> None:
+        """Record that ``token`` got a 401.
+
+        A rejected *refreshed* token counts as a failed refresh (the credentials give
+        tokens the ODS won't accept), but only once however many workers report it.
+        """
+        client = self._client(base_url, client_id)
+        with client.lock:
+            client.rejected.add(token)
+            if client.token == token:
+                client.token = None
+                client.fail("refreshed token was rejected: auth error: HTTP 401")
+
+    def confirm(self, base_url: str, client_id: str, token: str) -> None:
+        """Record that the ODS accepted the cached ``token``; resets the failure count."""
+        client = self._client(base_url, client_id)
+        with client.lock:
+            if client.token == token:
+                client.failures, client.paused_until = 0, 0.0
 
     def refresh(
         self, base_url: str, client_id: str, secret: str, *, stale_token: str
     ) -> tuple[str | None, str | None]:
         """Return ``(token, None)`` or ``(None, reason)``.
 
-        ``stale_token`` is the token that just expired or got a 401; a cached token that
+        ``stale_token`` is the token that expired or got a 401; a cached token that
         differs from it was refreshed by another worker and is returned without a fetch.
         """
-        key = (base_url, client_id)
-        with self._guard:
-            lock = self._locks.setdefault(key, threading.Lock())
-        with lock:
-            with self._guard:
-                cached = self._fresh(key)
-                failures = self._failures.get(key, 0)
-            if cached is not None and cached != stale_token:
+        client = self._client(base_url, client_id)
+        with client.lock:
+            cached = client.fresh()
+            if cached is not None and cached != stale_token and cached not in client.rejected:
                 return cached, None
-            if failures >= _MAX_REFRESH_FAILURES:
-                reason = self._last_error.get(key, "token fetch failed")
-                return None, f"{reason} (gave up after {failures} failed refreshes)"
-            if failures:
-                time.sleep(_REFRESH_BACKOFF * 2 ** (failures - 1))
+            wait = client.paused_until - time.monotonic()
+            if wait > 0:
+                return None, (
+                    f"{client.last_error} (refresh paused {math.ceil(wait)}s after "
+                    f"{client.failures} failed refreshes)"
+                )
+            if 0 < client.failures < _MAX_REFRESH_FAILURES:
+                time.sleep(_REFRESH_BACKOFF * 2 ** (client.failures - 1))
             got = fetch_token(base_url, client_id, secret, self._oauth_endpoint, self._backend)
-            with self._guard:
-                if got.token is not None:
-                    self._tokens[key] = (got.token, got.expires_at)
-                    self._failures[key] = 0
-                    return got.token, None
-                self._failures[key] = failures + 1
-                self._last_error[key] = got.error or "token fetch failed"
-                return None, self._last_error[key]
+            if got.token is None:
+                client.fail(got.error or "token fetch failed")
+                return None, client.last_error
+            client.token, client.expires_at = got.token, got.expires_at
+            return got.token, None

@@ -181,7 +181,7 @@ def test_failed_proactive_refresh_skips_the_request():
     assert server.tokens_used == []
 
 
-def test_throttled_token_endpoint_fails_fast_after_cap():
+def test_throttled_token_endpoint_pauses_after_cap():
     server = FakeServer(valid=set())
     with (
         patch(PATCH_RUNNER, side_effect=server),
@@ -191,22 +191,154 @@ def test_throttled_token_endpoint_fails_fast_after_cap():
         results = _post([_row() for _ in range(10)])
     assert fetch.call_count == 3
     assert [c.args[0] for c in sleep.call_args_list] == [1.0, 2.0]
-    assert results[0]["message"].endswith("auth refresh failed: HTTP 429")
-    assert results[-1]["message"].endswith(
-        "auth refresh failed: HTTP 429 (gave up after 3 failed refreshes)"
+    assert results[0]["message"] == "auth error: HTTP 401; auth refresh failed: HTTP 429"
+    assert results[1]["message"] == "auth refresh failed: HTTP 429"
+    assert results[-1]["message"] == (
+        "auth refresh failed: HTTP 429 (refresh paused 30s after 3 failed refreshes)"
+    )
+    # Only the first row sends the stale token; later rows know it was rejected.
+    assert server.tokens_used == ["old"]
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+def _paused_cache(clock):
+    cache = TokenCache(oauth_endpoint=OAUTH_EP, backend="requests")
+    with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")), patch(PATCH_SLEEP):
+        for _ in range(3):
+            cache.refresh(BASE_URL, "c", "s", stale_token="old")
+    return cache
+
+
+def test_refresh_resumes_after_cooldown_and_success_resets():
+    clock = Clock()
+    with patch("tha_edfi_runner._token_cache.time.monotonic", clock):
+        cache = _paused_cache(clock)
+        with patch(PATCH_FETCH) as fetch:
+            _, reason = cache.refresh(BASE_URL, "c", "s", stale_token="old")
+            fetch.assert_not_called()
+        assert reason.endswith("(refresh paused 30s after 3 failed refreshes)")
+
+        clock.now += 31
+        with (
+            patch(PATCH_FETCH, return_value=TokenFetch("t1", None, None)) as fetch,
+            patch(PATCH_SLEEP) as sleep,
+        ):
+            assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == ("t1", None)
+        sleep.assert_not_called()  # the probe after a cool-down doesn't back off again
+        assert fetch.call_count == 1
+        cache.confirm(BASE_URL, "c", "t1")  # the ODS accepted it
+
+        with (
+            patch(PATCH_FETCH, return_value=TokenFetch(None, None, "x")),
+            patch(PATCH_SLEEP) as sleep,
+        ):
+            assert cache.refresh(BASE_URL, "c", "s", stale_token="t1") == (None, "x")
+        sleep.assert_not_called()  # count was reset: first failure has no back-off
+
+
+def test_failed_probe_pauses_again():
+    clock = Clock()
+    with patch("tha_edfi_runner._token_cache.time.monotonic", clock):
+        cache = _paused_cache(clock)
+        clock.now += 31
+        with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")) as fetch:
+            assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == (None, "HTTP 429")
+            _, reason = cache.refresh(BASE_URL, "c", "s", stale_token="old")
+        assert fetch.call_count == 1
+        assert reason == "HTTP 429 (refresh paused 30s after 4 failed refreshes)"
+
+
+def test_batch_recovers_mid_run_once_cooldown_ends():
+    class SteppingClock:
+        """Each call is 11s later, so the 30s pause ends a few rows after it starts."""
+
+        def __init__(self):
+            self.now = 1000.0
+
+        def __call__(self):
+            self.now += 11
+            return self.now
+
+    server = FakeServer(valid={"new"})
+    fetches = [TokenFetch(None, None, "HTTP 429")] * 3 + [TokenFetch("new", None, None)]
+    with (
+        patch("tha_edfi_runner._token_cache.time.monotonic", SteppingClock()),
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, side_effect=fetches) as fetch,
+        patch(PATCH_SLEEP),
+    ):
+        results = _post([_row() for _ in range(10)])
+    assert fetch.call_count == 4
+    assert [r["status"] for r in results] == ["error"] * 5 + [None] * 5
+    assert "refresh paused" in results[4]["message"]
+    assert server.tokens_used == ["old"] + ["new"] * 5
+
+
+def test_rejected_refreshed_token_counts_as_failure():
+    server = FakeServer(valid=set())
+    tokens = (TokenFetch(f"t{n}", None, None) for n in range(1, 100))
+    with (
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, side_effect=lambda *_: next(tokens)) as fetch,
+        patch(PATCH_SLEEP),
+    ):
+        results = _post([_row() for _ in range(10)])
+    # Credentials give tokens the ODS rejects: capped, not one token request per row.
+    assert fetch.call_count == 3
+    assert results[-1]["message"] == (
+        "auth refresh failed: refreshed token was rejected: auth error: HTTP 401 "
+        "(refresh paused 30s after 3 failed refreshes)"
     )
 
 
-def test_success_resets_the_failure_count():
+def test_same_rejected_token_from_many_workers_counts_once():
+    cache = TokenCache(oauth_endpoint=OAUTH_EP, backend="requests")
+    with patch(PATCH_FETCH, return_value=TokenFetch("t1", None, None)):
+        cache.refresh(BASE_URL, "c", "s", stale_token="old")
+    for _ in range(5):
+        cache.reject(BASE_URL, "c", "t1")
+    assert cache._clients[(BASE_URL, "c")].failures == 1
+    assert cache.is_rejected(BASE_URL, "c", "t1")
+    assert cache.current(BASE_URL, "c") is None
+
+
+def test_only_an_accepted_token_resets_the_failure_count():
     cache = TokenCache(oauth_endpoint=OAUTH_EP, backend="requests")
     fetches = iter(
-        [TokenFetch(None, None, "boom"), TokenFetch("t1", None, None), TokenFetch(None, None, "x")]
+        [
+            TokenFetch(None, None, "boom"),
+            TokenFetch("t1", None, None),
+            TokenFetch(None, None, "x"),
+            TokenFetch("t2", None, None),
+            TokenFetch(None, None, "y"),
+        ]
     )
     with patch(PATCH_FETCH, side_effect=lambda *_: next(fetches)), patch(PATCH_SLEEP) as sleep:
         assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == (None, "boom")
         assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == ("t1", None)
+        # t1 was never confirmed, so this failure is the 2nd in a row.
         assert cache.refresh(BASE_URL, "c", "s", stale_token="t1") == (None, "x")
-    assert [c.args[0] for c in sleep.call_args_list] == [1.0]
+        assert cache.refresh(BASE_URL, "c", "s", stale_token="t1") == ("t2", None)
+        cache.confirm(BASE_URL, "c", "t2")
+        assert cache.refresh(BASE_URL, "c", "s", stale_token="t2") == (None, "y")
+    # Back-off before attempts 2 (1 failure), 3 (still 1: t1 didn't reset it) and
+    # 4 (2 failures); none before attempt 5, after confirm reset the count.
+    assert [c.args[0] for c in sleep.call_args_list] == [1.0, 1.0, 2.0]
+
+
+def test_confirm_ignores_a_token_that_is_not_cached():
+    cache = TokenCache(oauth_endpoint=OAUTH_EP, backend="requests")
+    with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "boom")):
+        cache.refresh(BASE_URL, "c", "s", stale_token="old")
+    cache.confirm(BASE_URL, "c", "old")
+    assert cache._clients[(BASE_URL, "c")].failures == 1
 
 
 # --- expiry parsing ---

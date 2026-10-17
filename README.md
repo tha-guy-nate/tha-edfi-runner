@@ -250,7 +250,7 @@ runner.batch_post_payload(
   re-auth (below) instead. After `max_retries` the result
   is final. Success gives `status=None, message=None`; anything else gives
   `"error"`, with the correlation id and retries attempted in the message, e.g.
-  `"HTTP 400: <Ed-Fi detail> (correlation id: <id>; retries attempted: 2)"`.
+  `"HTTP 400 Bad Request: <Ed-Fi detail> (correlation id: <id>; retries attempted: 2)"`.
 - `allow_statuses`: maps an HTTP code to the row status it gets in place of
   `"error"`. It applies only to errors that weren't retried; a retry that never
   succeeds always ends as `"error"`. The Ed-Fi detail and `correlation_id` stay
@@ -322,17 +322,29 @@ Rows after a refresh use the new token directly.
 
 Refresh failures show up in the row message:
 
-- `"auth refresh failed: <reason>"`: a proactive refresh failed, so the call was not
-  sent with the expired token.
+- `"auth refresh failed: <reason>"`: the row's token had expired or already got a 401
+  in this batch, and the refresh failed, so the call was not sent with that token.
+  These rows have `http_status=None`, like other failures that never reach Ed-Fi.
 - `"auth error: HTTP 401; auth refresh failed: <reason>"`: a 401 and the refresh after
   it both failed.
 - `"auth error: HTTP 401 (re-auth not possible: empty 'oAuthKey')"`: re-auth is
   configured, but this row is missing what it needs (or a setting like
   `oauth_endpoint` isn't set).
 
-After 3 failed refreshes in a row for one client (with 1s and 2s back-off), that client
-fails fast for the rest of the batch, with `(gave up after 3 failed refreshes)`, so a
-throttled token endpoint isn't hit once per row.
+Failed refreshes for a client back off (1s, then 2s). After 3 failures in a row,
+refreshes for that client pause for 30 seconds, and its rows fail fast with
+`(refresh paused <n>s after 3 failed refreshes)` instead of hitting the token endpoint
+once per row. After the pause, the next row tries one refresh again; if it works, the
+batch carries on with the new token. A refreshed token that Ed-Fi rejects with a 401
+counts as a failed refresh, so credentials that get unusable tokens hit the same limit.
+The count resets once Ed-Fi accepts a refreshed token.
+
+The refreshed token lives only inside that batch call. The `token_col` values in your
+rows aren't updated, so if you keep tokens elsewhere, fetch a new one for the next run
+(e.g. with `batch_fetch_tokens`).
+
+Each batch call uses one HTTP session per worker thread, shared across rows, and closes
+them when the call returns.
 
 ## Alternatives
 
