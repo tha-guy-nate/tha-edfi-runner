@@ -62,6 +62,7 @@ def test_post_payload_dry_run():
         "status": "dry_run",
         "message": None,
         "http_status": None,
+        "correlation_id": None,
     }
 
 
@@ -71,7 +72,13 @@ def test_post_payload_success_dict():
         result = runner.post_payload(
             {"studentAssessmentIdentifier": "A1"}, key="dist-1", commit=True
         )
-    assert result == {"key": "dist-1", "status": None, "message": None, "http_status": 201}
+    assert result == {
+        "key": "dist-1",
+        "status": None,
+        "message": None,
+        "http_status": 201,
+        "correlation_id": None,
+    }
 
 
 def test_post_payload_success_str():
@@ -80,7 +87,13 @@ def test_post_payload_success_str():
         result = runner.post_payload(
             '{"studentAssessmentIdentifier": "A1"}', key="dist-1", commit=True
         )
-    assert result == {"key": "dist-1", "status": None, "message": None, "http_status": 201}
+    assert result == {
+        "key": "dist-1",
+        "status": None,
+        "message": None,
+        "http_status": 201,
+        "correlation_id": None,
+    }
 
 
 def test_post_payload_error_parses_http_status():
@@ -179,6 +192,7 @@ def test_batch_post_payload_success():
         "http_status": None,
         "row_index": 0,
         "row_id": None,
+        "correlation_id": None,
     }
 
 

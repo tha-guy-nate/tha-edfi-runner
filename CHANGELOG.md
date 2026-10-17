@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-17
+### Added
+- Opt-in error-status handling on `ThaStudentAssessment.post_payload` and `batch_post_payload`. Both are off by default, so existing callers see no change.
+  - `retry_statuses` (e.g. `{400}`), `max_retries` (default `2`), `retry_backoff` (default `1.0`): re-POST when Ed-Fi returns a listed code, sleeping `retry_backoff * 2**attempt` seconds between tries. If the final response isn't a 2xx, the result is `"error"` and the message ends with `(correlation id: <id>; retries attempted: N)`. A success stays `status=None, message=None`.
+  - `retry_messages`: optional case-insensitive substrings that narrow `retry_statuses`. A listed code is retried only when the Ed-Fi message contains one of them (e.g. `["unable to resolve"]`), so payload errors that can never succeed fail on the first try.
+  - `allow_statuses`: maps an HTTP code to the row status it gets instead of `"error"`, chosen per code (e.g. `{400: "warning", 409: None}`). It applies only to errors that weren't retried; a failed retry always ends as `"error"`. The Ed-Fi detail stays in `message`. A 401 listed in `allow_statuses` gets that status and does not trigger re-auth.
+  - `EdfiError` is raised for a negative `max_retries` or `retry_backoff`, and for `401` in `retry_statuses` (re-POSTing with the same token can't succeed; the existing one-time re-auth via `auth_key_col`/`auth_secret_col` is unchanged).
+- `correlation_id` on every `post_payload`, `get_by_id`, `get_all`, and `delete_by_id` result, and on every batch result (including `batch_get_all` error placeholders). It is the Ed-Fi `correlationId` from the error body, falling back to a `correlation-id` / `x-correlation-id` response header. It is `None` on success, on dry runs, and for client-side failures.
+
+### Changed
+- Error messages now also pick up the ODS/API 7.x problem-details `detail` field when `message`/`error` are absent. Trailing whitespace is stripped from the Ed-Fi detail.
+
 ## [0.3.0] - 2026-10-02
 ### Changed
 - Dependencies are now pinned to exact versions (`==`) instead of `>=` floors, and updated to the latest releases: `tha-req-runner==0.4.0`, `tqdm==4.70.1`.

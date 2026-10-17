@@ -189,21 +189,64 @@ Inherits `ThaEdfiBase`. Default endpoint: `ed-fi/studentAssessments`.
 #### Single methods
 
 ```python
-runner.post_payload(payload, *, key, endpoint=..., commit=False) -> dict
-# {"key": ..., "status": None | "error" | "dry_run", "message": ..., "http_status": int | None}
+runner.post_payload(payload, *, key, endpoint=..., commit=False,
+                    retry_statuses=None, retry_messages=None, max_retries=2,
+                    retry_backoff=1.0,
+                    allow_statuses=None) -> dict
+# {"key": ..., "status": None | "error" | "dry_run" | <allowed>, "message": ...,
+#  "http_status": int | None, "correlation_id": str | None}
 
 runner.get_by_id(resource_id, *, endpoint=...) -> dict
-# {"id": ..., "status": None | "error", "message": ..., "data": dict | None, "http_status": int | None}
+# {"id": ..., "status": None | "error", "message": ..., "data": dict | None,
+#  "http_status": int | None, "correlation_id": str | None}
 
 runner.get_all(*, key, endpoint=..., params=None, limit=500, show_progress=False) -> dict
-# {"key": ..., "status": None | "error", "message": ..., "data": [dict, ...]}
+# {"key": ..., "status": None | "error", "message": ..., "data": [dict, ...],
+#  "correlation_id": str | None}
 
 runner.delete_by_id(resource_id, *, key, endpoint=..., commit=False) -> dict
-# {"id": ..., "key": ..., "status": "deleted" | "error" | "dry_run", "message": ..., "http_status": int | None}
+# {"id": ..., "key": ..., "status": "deleted" | "error" | "dry_run", "message": ...,
+#  "http_status": int | None, "correlation_id": str | None}
 
 # http_status is the HTTP status code of the Ed-Fi response (e.g. 201, 409, 401),
 # or None for client-side failures (dry run, invalid JSON, missing column).
+# correlation_id is the Ed-Fi correlation id of an error response (the body's
+# "correlationId", else a correlation-id header) and None otherwise. Quote it to
+# the ODS host to find the request in their logs.
 ```
+
+#### Retrying and allowing error statuses (opt-in)
+
+`post_payload` and `batch_post_payload` treat every non-2xx response as `"error"`
+and never retry it unless you opt in:
+
+```python
+runner.batch_post_payload(
+    rows,
+    payload_col="payload",
+    key_col="District BK",
+    commit=True,
+    retry_statuses={400},                      # re-POST on these codes...
+    retry_messages=["unable to resolve"],      # ...only when the message matches
+    max_retries=2,                             # ...up to 2 more times
+    retry_backoff=1.0,                         # sleeping 1s, 2s, 4s, ...
+    allow_statuses={400: "warning", 409: None},  # non-retried code -> row status
+)
+```
+
+- `retry_messages`: optional case-insensitive substrings. When set, a listed code
+  is retried only if the Ed-Fi message contains one of them, so a payload error
+  like `"... is required"` fails right away instead of being retried.
+- `retry_statuses`: HTTP codes to re-POST on. `401` isn't allowed here; use
+  re-auth (below) instead. After `max_retries` the result
+  is final. Success gives `status=None, message=None`; anything else gives
+  `"error"`, with the correlation id and retries attempted in the message, e.g.
+  `"400 Client Error: ... (correlation id: <id>; retries attempted: 2)"`.
+- `allow_statuses`: maps an HTTP code to the row status it gets in place of
+  `"error"`. It applies only to errors that weren't retried; a retry that never
+  succeeds always ends as `"error"`. The Ed-Fi detail and `correlation_id` stay
+  on the result. Codes not in the map stay `"error"`, and so do client-side
+  failures such as invalid JSON.
 
 All write methods require `commit=True` to execute — otherwise return `status="dry_run"`.
 
@@ -252,7 +295,7 @@ each result dict:
   caller-owned identity assigned upstream, e.g. at CSV read). `None` on every
   result unless you pass `row_id_col`. Prefer this over `row_index` when you have a
   stable id; `row_index` is the fallback.
-- `http_status` — see the single-method note above.
+- `http_status`, `correlation_id`: see the single-method note above.
 
 ### Re-auth
 
