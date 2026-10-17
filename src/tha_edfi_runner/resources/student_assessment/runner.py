@@ -70,12 +70,19 @@ def _refetch_token(
 
 
 def _error_msg(result: dict[str, Any]) -> str:
-    if result.get("code") == 401:
+    """``"HTTP <code>"`` for an HTTP error, so the text doesn't depend on the backend.
+
+    Only a failure with no response (e.g. a connection error) keeps the library's text.
+    """
+    code = result.get("code")
+    if code == 401:
         return "auth error: HTTP 401"
-    return result.get("message") or f"HTTP {result.get('code')}"
+    if isinstance(code, int):
+        return f"HTTP {code}"
+    return result.get("message") or "request failed"
 
 
-def _post_error_msg(result: dict[str, Any]) -> str:
+def _detailed_error_msg(result: dict[str, Any]) -> str:
     msg = _error_msg(result)
     data = result.get("data")
     if result.get("code") != 401 and isinstance(data, dict):
@@ -97,7 +104,7 @@ def _should_retry(
         return False
     if not retry_messages:
         return True
-    msg = _post_error_msg(result).lower()
+    msg = _detailed_error_msg(result).lower()
     return any(m.lower() in msg for m in retry_messages)
 
 
@@ -195,7 +202,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             retries += 1
         http_status = result.get("code")
         if result["status"] == "error":
-            msg = _post_error_msg(result)
+            msg = _detailed_error_msg(result)
             correlation_id = _correlation_id(result)
             if retry_statuses:
                 notes = [f"retries attempted: {retries}"]
@@ -420,7 +427,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return {
                 "id": resource_id,
                 "status": "error",
-                "message": _error_msg(result),
+                "message": _detailed_error_msg(result),
                 "data": None,
                 "http_status": http_status,
                 "correlation_id": _correlation_id(result),
@@ -590,7 +597,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 if result.get("code") == 401:
                     msg = "auth error: HTTP 401"
                 else:
-                    msg = f"GET {endpoint} failed: {result['message']} (code {result['code']})"
+                    msg = f"GET {endpoint} failed: {_error_msg(result)}"
                 return {
                     "key": key,
                     "status": "error",
@@ -777,7 +784,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         )
         http_status = result.get("code")
         if result["status"] == "error":
-            msg = result["message"] or f"HTTP {result['code']}"
+            msg = _detailed_error_msg(result)
             return {
                 "id": resource_id,
                 "key": key,

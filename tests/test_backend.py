@@ -105,3 +105,60 @@ def test_batch_fetch_tokens_passes_backend():
         MockBase.return_value.fetch_token.return_value = {"token": "t", "status": None}
         base.batch_fetch_tokens([row], oauth_endpoint="oauth/token", account_col="account")
     assert MockBase.call_args.kwargs["backend"] == "httpx2"
+
+
+@pytest.mark.parametrize("backend", ["requests", "httpx2"])
+def test_error_message_is_the_same_for_both_backends(backend):
+    import responses
+
+    body = {"message": "X is required.", "correlationId": "cid-1"}
+    runner = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN, backend=backend)
+    url = f"{BASE_URL}/ed-fi/studentAssessments"
+    if backend == "requests":
+        with responses.RequestsMock() as rsps:
+            rsps.add(responses.POST, url, json=body, status=400)
+            result = runner.post_payload({"id": "1"}, key="k", commit=True)
+    else:
+        client = httpx2.Client(
+            transport=httpx2.MockTransport(lambda req: httpx2.Response(400, json=body))
+        )
+        with patch.object(runner._req, "get_session", return_value=client):
+            result = runner.post_payload({"id": "1"}, key="k", commit=True)
+    assert result["message"] == "HTTP 400: X is required."
+
+
+def test_connection_error_keeps_library_text():
+    runner = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN)
+    err = {"status": "error", "code": None, "data": None, "message": "Connection refused"}
+    with patch.object(runner._req, "safe_call", return_value=err):
+        result = runner.post_payload({"id": "1"}, key="k", commit=True)
+    assert result["message"] == "Connection refused"
+    assert result["http_status"] is None
+
+
+def test_detail_on_get_by_id_and_delete_errors():
+    runner = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN)
+    err = {"status": "error", "code": 409, "data": {"message": "in use"}, "message": "x"}
+    with patch.object(runner._req, "safe_call", return_value=err):
+        assert runner.get_by_id("abc")["message"] == "HTTP 409: in use"
+        assert runner.delete_by_id("abc", key="k", commit=True)["message"] == "HTTP 409: in use"
+
+
+def test_oauth_failure_message_is_backend_neutral():
+    base = ThaEdfiBase(base_url=BASE_URL, client_id="id", client_secret="s", backend="httpx2")
+    err = {"status": "error", "code": 401, "data": None, "message": "Client error '401'..."}
+    with patch.object(base._auth._req, "safe_call", return_value=err):
+        result = base.fetch_token()
+    assert result == {"token": None, "status": "error", "message": "auth error: HTTP 401"}
+
+
+def test_oauth_connection_failure_keeps_library_text():
+    from tha_edfi_runner.auth import OAuth2Auth
+
+    auth = OAuth2Auth(client_id="id", client_secret="s", token_url=f"{BASE_URL}/oauth/token")
+    err = {"status": "error", "code": None, "data": None, "message": "Connection refused"}
+    with (
+        patch.object(auth._req, "safe_call", return_value=err),
+        pytest.raises(EdfiError, match="OAuth2 token fetch failed: Connection refused"),
+    ):
+        auth.get_token()

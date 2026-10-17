@@ -53,9 +53,9 @@ class OAuth2Auth:
             auth=(self._client_id, self._client_secret),
         )
         if result["status"] == "error" or not isinstance(result["data"], dict):
-            raise EdfiError(
-                f"OAuth2 token fetch failed: {result['message']} (code {result['code']})"
-            )
+            code = result["code"]
+            reason = f"HTTP {code}" if isinstance(code, int) else result["message"]
+            raise EdfiError(f"OAuth2 token fetch failed: {reason}")
         data: dict[str, Any] = result["data"]
         token = data.get("access_token")
         if not token:

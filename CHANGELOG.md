@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `backend` (keyword-only, `"requests"` or `"httpx2"`, default `"requests"`) on `ThaEdfiBase` and `ThaStudentAssessment`. It selects the HTTP client for every Ed-Fi and OAuth call, and the batch methods, `batch_fetch_tokens`, and token re-fetches pass it on to the per-row instances they create. Existing callers keep `requests`.
 - `[httpx2]` extra (`pip install "tha-edfi-runner[httpx2]"`), which installs `tha-req-runner[httpx2]`. Choosing `backend="httpx2"` without it raises `ImportError` with the install command. An unknown backend raises `EdfiError`.
 
+### Changed
+- Error messages now start with `HTTP <code>` instead of the HTTP library's exception text, so they read the same on both backends: `"HTTP 400: <Ed-Fi detail>"` rather than `"400 Client Error: Bad Request for url: ..."` (requests) or httpx2's multi-line `"Client error '400 Bad Request' ..."`. This applies to `post_payload`, `get_by_id`, `get_all` (`"GET <endpoint> failed: HTTP <code>"`), `delete_by_id`, and OAuth token fetch failures. A 401 is still `"auth error: HTTP 401"`, and a failure with no response, such as a connection error, keeps the library's text. Callers matching on the old `"400 Client Error"` text should match on `"HTTP 400"`.
+- `get_by_id` and `delete_by_id` error messages now include the Ed-Fi detail from the response body, like `post_payload` (`"HTTP 409: <detail>"`).
+
 ## [0.4.0] - 2026-10-17
 ### Added
 - Opt-in error-status handling on `ThaStudentAssessment.post_payload` and `batch_post_payload`. Both are off by default, so existing callers see no change.

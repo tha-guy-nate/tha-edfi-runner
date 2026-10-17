@@ -102,9 +102,7 @@ def test_retry_exhausted_message_lists_correlation_id_and_retries():
         )
     assert result["status"] == "error"
     assert result["correlation_id"] == CID
-    assert result["message"] == (
-        f"400 Client Error: bad (correlation id: {CID}; retries attempted: 1)"
-    )
+    assert result["message"] == (f"HTTP 400: bad (correlation id: {CID}; retries attempted: 1)")
 
 
 def test_retry_ignores_unlisted_status():
@@ -266,7 +264,7 @@ def test_correlation_id_from_problem_details_body():
     with patch.object(runner._req, "safe_call", return_value=_err(400, data=body)):
         result = runner.post_payload({"id": "1"}, key="dist-1", commit=True)
     assert result["correlation_id"] == CID
-    assert result["message"] == "400 Client Error: Data validation failed."
+    assert result["message"] == "HTTP 400: Data validation failed."
 
 
 def test_correlation_id_from_header_fallback():
@@ -346,7 +344,7 @@ def test_multiline_validation_400_body():
     assert result["status"] == "warning"
     assert result["http_status"] == 400
     assert result["correlation_id"] == CID
-    assert result["message"].startswith("400 Client Error: Validation of 'Widget' failed.")
+    assert result["message"].startswith("HTTP 400: Validation of 'Widget' failed.")
     assert result["message"].endswith("SampleDescriptorId is required.")
 
 

@@ -250,7 +250,7 @@ runner.batch_post_payload(
   re-auth (below) instead. After `max_retries` the result
   is final. Success gives `status=None, message=None`; anything else gives
   `"error"`, with the correlation id and retries attempted in the message, e.g.
-  `"400 Client Error: ... (correlation id: <id>; retries attempted: 2)"`.
+  `"HTTP 400: <Ed-Fi detail> (correlation id: <id>; retries attempted: 2)"`.
 - `allow_statuses`: maps an HTTP code to the row status it gets in place of
   `"error"`. It applies only to errors that weren't retried; a retry that never
   succeeds always ends as `"error"`. The Ed-Fi detail and `correlation_id` stay
