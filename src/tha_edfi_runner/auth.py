@@ -6,6 +6,7 @@ from typing import Any
 
 from tha_req_runner.runner import ThaReq
 
+from tha_edfi_runner._backend import Backend, make_req
 from tha_edfi_runner.errors import EdfiError
 
 _TOKEN_EXPIRY_BUFFER = 60  # seconds before expiry to proactively refresh
@@ -14,11 +15,18 @@ _TOKEN_EXPIRY_BUFFER = 60  # seconds before expiry to proactively refresh
 class OAuth2Auth:
     """Client-credentials OAuth2 — thread-safe token fetch and refresh."""
 
-    def __init__(self, *, client_id: str, client_secret: str, token_url: str) -> None:
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        client_secret: str,
+        token_url: str,
+        backend: Backend = "requests",
+    ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._token_url = token_url
-        self._req = ThaReq()
+        self._req: ThaReq = make_req(backend)
         self._lock = threading.Lock()
         self._token: str | None = None
         self._expires_at: float = 0.0

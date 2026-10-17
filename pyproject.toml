@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tha-edfi-runner"
-version = "0.4.0"
+version = "0.4.1"
 description = "A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pipeline-friendly interface."
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+httpx2 = ["tha-req-runner[httpx2]==0.4.0"]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
@@ -38,6 +39,7 @@ dev = [
     "pip-audit>=2.10.1",
     "pytest-cov>=7.1.0",
     "responses>=0.25",
+    "httpx2>=2.13.1",
 ]
 
 [project.urls]

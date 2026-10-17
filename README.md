@@ -13,6 +13,7 @@ A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pip
 
 ```bash
 pip install tha-edfi-runner
+pip install "tha-edfi-runner[httpx2]"   # optional httpx2 HTTP backend
 ```
 
 ## Quick start
@@ -144,8 +145,16 @@ ThaEdfiBase(
     client_secret=None,
     token_url=None,
     bearer_token=None,
+    backend="requests",   # or "httpx2"
 )
 ```
+
+`backend` picks the HTTP client used for every Ed-Fi and OAuth call, including the
+per-row instances the batch methods create. `"requests"` is the default. `"httpx2"`
+needs the `[httpx2]` extra and raises `ImportError` with the install command if it
+is missing. Only the `requests` backend retries 5xx responses at the transport
+level, and only for GET/DELETE (never POST); the `httpx2` backend retries connection
+failures only.
 
 #### `base.fetch_token()`
 

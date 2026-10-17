@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-17
+### Added
+- `backend` (keyword-only, `"requests"` or `"httpx2"`, default `"requests"`) on `ThaEdfiBase` and `ThaStudentAssessment`. It selects the HTTP client for every Ed-Fi and OAuth call, and the batch methods, `batch_fetch_tokens`, and token re-fetches pass it on to the per-row instances they create. Existing callers keep `requests`.
+- `[httpx2]` extra (`pip install "tha-edfi-runner[httpx2]"`), which installs `tha-req-runner[httpx2]`. Choosing `backend="httpx2"` without it raises `ImportError` with the install command. An unknown backend raises `EdfiError`.
+
 ## [0.4.0] - 2026-10-17
 ### Added
 - Opt-in error-status handling on `ThaStudentAssessment.post_payload` and `batch_post_payload`. Both are off by default, so existing callers see no change.

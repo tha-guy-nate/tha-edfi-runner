@@ -189,7 +189,7 @@ def test_batch_post_payload_failed_retry_is_error_with_correlation_id():
     runner = make_runner()
     responses = [_err(400), _err(400, data={"correlationId": CID})]
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", side_effect=responses) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", side_effect=responses) as call,
         patch(PATCH_SLEEP),
     ):
         result = runner.batch_post_payload(
@@ -211,7 +211,7 @@ def test_allowed_401_does_not_reauth():
     runner = make_runner()
     row = {**_row(), "key": "k", "secret": "s"}
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", return_value=_err(401)) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", return_value=_err(401)) as call,
         patch(
             "tha_edfi_runner.resources.student_assessment.runner._refetch_token",
             return_value="fresh",
@@ -316,7 +316,7 @@ def test_delete_by_id_error_carries_correlation_id():
 def test_get_all_error_carries_correlation_id_into_batch_placeholder():
     runner = make_runner()
     err = _err(500, data={"correlationId": CID})
-    with patch("tha_edfi_runner.base.ThaReq.safe_call", return_value=err):
+    with patch("tha_req_runner.runner.ThaReq.safe_call", return_value=err):
         flat = runner.batch_get_all([_row()], key_col="District BK")
     assert flat == [
         {
@@ -412,7 +412,7 @@ def test_batch_post_payload_passes_retry_messages():
     runner = make_runner()
     responses = [_err(400, data=_TRANSIENT), _ok()]
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", side_effect=responses) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", side_effect=responses) as call,
         patch(PATCH_SLEEP),
     ):
         result = runner.batch_post_payload(

@@ -9,6 +9,7 @@ from typing import Any, cast
 from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
+from tha_edfi_runner._backend import Backend
 from tha_edfi_runner.base import ThaEdfiBase, _compose_label
 from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment import api
@@ -47,12 +48,22 @@ def _validate_status_handling(
         raise EdfiError(f"retry_backoff must be >= 0, got {retry_backoff}")
 
 
-def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str | None) -> str | None:
+def _refetch_token(
+    base_url: str,
+    key: str,
+    secret: str,
+    oauth_endpoint: str | None,
+    backend: Backend = "requests",
+) -> str | None:
     if not oauth_endpoint:
         return None
     token_url = f"{base_url}/{oauth_endpoint.lstrip('/')}"
     instance = ThaEdfiBase(
-        base_url=base_url, client_id=key, client_secret=secret, token_url=token_url
+        base_url=base_url,
+        client_id=key,
+        client_secret=secret,
+        token_url=token_url,
+        backend=backend,
     )
     result = instance.fetch_token()
     return result["token"] if result["status"] is None else None
@@ -318,12 +329,17 @@ class ThaStudentAssessment(ThaEdfiBase):
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
                 if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                    fresh = _refetch_token(
+                        row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                    )
                     if fresh:
                         row_token = fresh
 
             instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+                base_url=row_base_url,
+                bearer_token=row_token,
+                api_version=effective_api_version,
+                backend=self.backend,
             )
             status_handling: dict[str, Any] = {
                 "retry_statuses": retry_statuses,
@@ -337,10 +353,15 @@ class ThaStudentAssessment(ThaEdfiBase):
             )
 
             if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                fresh = _refetch_token(
+                    row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                )
                 if fresh:
                     instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                        base_url=row_base_url,
+                        bearer_token=fresh,
+                        api_version=effective_api_version,
+                        backend=self.backend,
                     )
                     result = instance.post_payload(
                         payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
@@ -477,20 +498,30 @@ class ThaStudentAssessment(ThaEdfiBase):
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
                 if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                    fresh = _refetch_token(
+                        row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                    )
                     if fresh:
                         row_token = fresh
 
             instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+                base_url=row_base_url,
+                bearer_token=row_token,
+                api_version=effective_api_version,
+                backend=self.backend,
             )
             result = instance.get_by_id(resource_id, endpoint=endpoint)
 
             if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                fresh = _refetch_token(
+                    row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                )
                 if fresh:
                     instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                        base_url=row_base_url,
+                        bearer_token=fresh,
+                        api_version=effective_api_version,
+                        backend=self.backend,
                     )
                     result = instance.get_by_id(resource_id, endpoint=endpoint)
 
@@ -650,20 +681,30 @@ class ThaStudentAssessment(ThaEdfiBase):
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
                 if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                    fresh = _refetch_token(
+                        row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                    )
                     if fresh:
                         row_token = fresh
 
             instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+                base_url=row_base_url,
+                bearer_token=row_token,
+                api_version=effective_api_version,
+                backend=self.backend,
             )
             result = instance.get_all(key=key_val, endpoint=endpoint, params=params, limit=limit)
 
             if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                fresh = _refetch_token(
+                    row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                )
                 if fresh:
                     instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                        base_url=row_base_url,
+                        bearer_token=fresh,
+                        api_version=effective_api_version,
+                        backend=self.backend,
                     )
                     result = instance.get_all(
                         key=key_val, endpoint=endpoint, params=params, limit=limit
@@ -838,20 +879,30 @@ class ThaStudentAssessment(ThaEdfiBase):
             if can_reauth and expires_col:
                 exp = row.get(expires_col)
                 if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                    fresh = _refetch_token(
+                        row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                    )
                     if fresh:
                         row_token = fresh
 
             instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
+                base_url=row_base_url,
+                bearer_token=row_token,
+                api_version=effective_api_version,
+                backend=self.backend,
             )
             result = instance.delete_by_id(resource_id, key=key_val, endpoint=endpoint, commit=True)
 
             if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
+                fresh = _refetch_token(
+                    row_base_url, auth_key, auth_secret, oauth_endpoint, self.backend
+                )
                 if fresh:
                     instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
+                        base_url=row_base_url,
+                        bearer_token=fresh,
+                        api_version=effective_api_version,
+                        backend=self.backend,
                     )
                     result = instance.delete_by_id(
                         resource_id, key=key_val, endpoint=endpoint, commit=True
