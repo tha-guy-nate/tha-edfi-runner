@@ -7,8 +7,8 @@ import pytest
 import requests
 
 from tha_edfi_runner import ThaEdfiBase, ThaStudentAssessment
+from tha_edfi_runner._token_cache import fetch_token
 from tha_edfi_runner.errors import EdfiError
-from tha_edfi_runner.resources.student_assessment.runner import _refetch_token
 
 BASE_URL = "https://edfi.example.com/api"
 TOKEN = "test_token"
@@ -91,10 +91,10 @@ def test_batch_methods_pass_backend_to_row_instances(method, kwargs):
     assert MockCls.call_args.kwargs["backend"] == "httpx2"
 
 
-def test_refetch_token_uses_backend():
-    with patch("tha_edfi_runner.resources.student_assessment.runner.ThaEdfiBase") as MockBase:
+def test_fetch_token_uses_backend():
+    with patch("tha_edfi_runner._token_cache.ThaEdfiBase") as MockBase:
         MockBase.return_value.fetch_token.return_value = {"token": "t", "status": None}
-        _refetch_token(BASE_URL, "k", "s", "oauth/token", "httpx2")
+        fetch_token(BASE_URL, "k", "s", "oauth/token", "httpx2")
     assert MockBase.call_args.kwargs["backend"] == "httpx2"
 
 

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tha_edfi_runner._token_cache import TokenFetch
 from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment.runner import (
     ThaStudentAssessment,
@@ -211,8 +212,8 @@ def test_allowed_401_does_not_reauth():
     with (
         patch("tha_req_runner.runner.ThaReq.safe_call", return_value=_err(401)) as call,
         patch(
-            "tha_edfi_runner.resources.student_assessment.runner._refetch_token",
-            return_value="fresh",
+            "tha_edfi_runner._token_cache.fetch_token",
+            return_value=TokenFetch("fresh", None, None),
         ) as refetch,
     ):
         result = runner.batch_post_payload(

@@ -310,8 +310,29 @@ each result dict:
 
 Provide `auth_key_col`, `auth_secret_col`, and `oauth_endpoint` to enable automatic token refresh:
 
-- **Proactive**: if `expires_col` is set and the token has expired, a fresh token is fetched before the call
-- **Reactive**: if a call returns 401, the token is refreshed once and the call retried
+- **Proactive**: if `expires_col` is set and the token has expired, a fresh token is
+  fetched before the call. The expiry can be a number or a numeric string (e.g. after a
+  CSV round trip).
+- **Reactive**: if a call returns 401, the token is refreshed once and the call retried.
+
+A refreshed token is shared by every row and worker in the batch call, keyed by
+`(base_url, client id)`. One refresh serves the whole batch instead of one per row,
+and when several workers hit an expired token at once, only one token request is made.
+Rows after a refresh use the new token directly.
+
+Refresh failures show up in the row message:
+
+- `"auth refresh failed: <reason>"`: a proactive refresh failed, so the call was not
+  sent with the expired token.
+- `"auth error: HTTP 401; auth refresh failed: <reason>"`: a 401 and the refresh after
+  it both failed.
+- `"auth error: HTTP 401 (re-auth not possible: empty 'oAuthKey')"`: re-auth is
+  configured, but this row is missing what it needs (or a setting like
+  `oauth_endpoint` isn't set).
+
+After 3 failed refreshes in a row for one client (with 1s and 2s back-off), that client
+fails fast for the rest of the batch, with `(gave up after 3 failed refreshes)`, so a
+throttled token endpoint isn't hit once per row.
 
 ## Alternatives
 

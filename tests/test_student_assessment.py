@@ -1,17 +1,14 @@
 import time
 from unittest.mock import MagicMock, patch
 
-from tha_edfi_runner.base import ThaEdfiBase
-from tha_edfi_runner.resources.student_assessment.runner import (
-    ThaStudentAssessment,
-    _refetch_token,
-)
+from tha_edfi_runner._token_cache import TokenFetch
+from tha_edfi_runner.resources.student_assessment.runner import ThaStudentAssessment
 
 BASE_URL = "https://edfi.example.com/api"
 TOKEN = "test_token"
 
 PATCH_RUNNER = "tha_edfi_runner.resources.student_assessment.runner.ThaStudentAssessment"
-PATCH_REFETCH = "tha_edfi_runner.resources.student_assessment.runner._refetch_token"
+PATCH_REFETCH = "tha_edfi_runner._token_cache.fetch_token"
 
 
 def make_runner():
@@ -24,31 +21,6 @@ def _ok(data=None, code=200):
 
 def _err(code=400, message="bad request", data=None):
     return {"status": "error", "code": code, "data": data, "message": message, "raw_response": None}
-
-
-# --- _refetch_token ---
-
-
-def test_refetch_token_returns_none_without_oauth_endpoint():
-    assert _refetch_token(BASE_URL, "key", "secret", None) is None
-
-
-def test_refetch_token_returns_token_on_success():
-    with patch.object(
-        ThaEdfiBase, "fetch_token", return_value={"token": "new-tok", "status": None}
-    ):
-        result = _refetch_token(BASE_URL, "key", "secret", "oauth/token")
-    assert result == "new-tok"
-
-
-def test_refetch_token_returns_none_on_failure():
-    with patch.object(
-        ThaEdfiBase,
-        "fetch_token",
-        return_value={"token": None, "status": "error", "message": "bad creds"},
-    ):
-        result = _refetch_token(BASE_URL, "key", "secret", "oauth/token")
-    assert result is None
 
 
 # --- post_payload (single) ---
@@ -258,7 +230,7 @@ def test_batch_post_payload_expired_token_proactive_refresh():
     ok = {"key": "dist-1", "status": None, "message": None}
     with (
         patch(PATCH_RUNNER) as MockCls,
-        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+        patch(PATCH_REFETCH, return_value=TokenFetch("fresh_tok", None, None)) as mock_refetch,
     ):
         MockCls.return_value.post_payload.return_value = ok
         runner.batch_post_payload(
@@ -1179,7 +1151,10 @@ def test_batch_get_by_id_401_retries_and_succeeds():
     rows = [_with_creds(_make_get_row())]
     fail = {"id": "rid-1", "status": "error", "message": "auth error: HTTP 401", "data": None}
     ok = {"id": "rid-1", "status": None, "message": None, "data": {}}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value=TokenFetch("new_tok", None, None)),
+    ):
         MockCls.return_value.get_by_id.side_effect = [fail, ok]
         result = runner.batch_get_by_id(
             rows,
@@ -1195,7 +1170,10 @@ def test_batch_get_by_id_401_retry_still_fails():
     runner = make_runner()
     rows = [_with_creds(_make_get_row())]
     fail = {"id": "rid-1", "status": "error", "message": "auth error: HTTP 401", "data": None}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value=TokenFetch("new_tok", None, None)),
+    ):
         MockCls.return_value.get_by_id.return_value = fail
         result = runner.batch_get_by_id(
             rows,
@@ -1224,7 +1202,7 @@ def test_batch_get_by_id_expired_token_proactive_refresh():
     ok = {"id": "rid-1", "status": None, "message": None, "data": {}}
     with (
         patch(PATCH_RUNNER) as MockCls,
-        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+        patch(PATCH_REFETCH, return_value=TokenFetch("fresh_tok", None, None)) as mock_refetch,
     ):
         MockCls.return_value.get_by_id.return_value = ok
         runner.batch_get_by_id(
@@ -1318,7 +1296,10 @@ def test_batch_get_all_401_retries_and_succeeds():
     rows = [_with_creds(_batch_row())]
     fail = {"key": "100", "status": "error", "message": "auth error: HTTP 401", "data": None}
     ok = {"key": "100", "status": None, "message": None, "data": [{"id": "a"}]}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value=TokenFetch("new_tok", None, None)),
+    ):
         MockCls.return_value.get_all.side_effect = [fail, ok]
         result = runner.batch_get_all(
             rows,
@@ -1337,7 +1318,7 @@ def test_batch_get_all_expired_token_proactive_refresh():
     ok = {"key": "100", "status": None, "message": None, "data": [{"id": "a"}]}
     with (
         patch(PATCH_RUNNER) as MockCls,
-        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+        patch(PATCH_REFETCH, return_value=TokenFetch("fresh_tok", None, None)) as mock_refetch,
     ):
         MockCls.return_value.get_all.return_value = ok
         runner.batch_get_all(
@@ -1359,7 +1340,10 @@ def test_batch_post_payload_401_retries_and_succeeds():
     rows = [_with_creds(_make_post_row())]
     fail = {"key": "dist-1", "status": "error", "message": "auth error: HTTP 401"}
     ok = {"key": "dist-1", "status": None, "message": None}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value=TokenFetch("new_tok", None, None)),
+    ):
         MockCls.return_value.post_payload.side_effect = [fail, ok]
         result = runner.batch_post_payload(
             rows,
@@ -1381,7 +1365,10 @@ def test_batch_delete_by_id_401_retries_and_succeeds():
     rows = [_with_creds(_make_delete_row())]
     fail = {"id": "rid-1", "key": "dist-1", "status": "error", "message": "auth error: HTTP 401"}
     ok = {"id": "rid-1", "key": "dist-1", "status": "deleted", "message": None}
-    with patch(PATCH_RUNNER) as MockCls, patch(PATCH_REFETCH, return_value="new_tok"):
+    with (
+        patch(PATCH_RUNNER) as MockCls,
+        patch(PATCH_REFETCH, return_value=TokenFetch("new_tok", None, None)),
+    ):
         MockCls.return_value.delete_by_id.side_effect = [fail, ok]
         result = runner.batch_delete_by_id(
             rows,
@@ -1401,7 +1388,7 @@ def test_batch_delete_by_id_expired_token_proactive_refresh():
     ok = {"id": "rid-1", "key": "dist-1", "status": "deleted", "message": None}
     with (
         patch(PATCH_RUNNER) as MockCls,
-        patch(PATCH_REFETCH, return_value="fresh_tok") as mock_refetch,
+        patch(PATCH_REFETCH, return_value=TokenFetch("fresh_tok", None, None)) as mock_refetch,
     ):
         MockCls.return_value.delete_by_id.return_value = ok
         runner.batch_delete_by_id(

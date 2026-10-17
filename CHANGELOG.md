@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-10-17
+## [0.5.0] - 2026-10-17
 ### Added
 - `backend` (keyword-only, `"requests"` or `"httpx2"`, default `"requests"`) on `ThaEdfiBase` and `ThaStudentAssessment`. It selects the HTTP client for every Ed-Fi and OAuth call, and the batch methods, `batch_fetch_tokens`, and token re-fetches pass it on to the per-row instances they create. Existing callers keep `requests`.
 - `[httpx2]` extra (`pip install "tha-edfi-runner[httpx2]"`), which installs `tha-req-runner[httpx2]`. Choosing `backend="httpx2"` without it raises `ImportError` with the install command. An unknown backend raises `EdfiError`.
@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Error messages now start with `HTTP <code>` instead of the HTTP library's exception text, so they read the same on both backends: `"HTTP 400: <Ed-Fi detail>"` rather than `"400 Client Error: Bad Request for url: ..."` (requests) or httpx2's multi-line `"Client error '400 Bad Request' ..."`. This applies to `post_payload`, `get_by_id`, `get_all` (`"GET <endpoint> failed: HTTP <code>"`), `delete_by_id`, and OAuth token fetch failures. A 401 is still `"auth error: HTTP 401"`, and a failure with no response, such as a connection error, keeps the library's text. Callers matching on the old `"400 Client Error"` text should match on `"HTTP 400"`.
 - `get_by_id` and `delete_by_id` error messages now include the Ed-Fi detail from the response body, like `post_payload` (`"HTTP 409: <detail>"`).
+
+### Fixed
+- Batch re-auth (`batch_post_payload`, `batch_get_by_id`, `batch_get_all`, `batch_delete_by_id`) no longer breaks down after a token expires mid-batch. Before, a refreshed token was used for one row only, so every later row refreshed again (one token request per row from every worker), and a failed refresh was silent: the row kept the stale token and reported a plain 401. Now:
+  - A refreshed token is cached per batch call, keyed by `(base_url, client id)`, and used by every later row and worker. Concurrent refreshes for the same client make one token request.
+  - A failed refresh puts its reason in the row message: `"auth refresh failed: <reason>"` (proactive; the call is not sent with the expired token) or `"auth error: HTTP 401; auth refresh failed: <reason>"` (after a 401).
+  - After 3 consecutive failed refreshes for a client (1s then 2s back-off), that client fails fast for the rest of the batch with `(gave up after 3 failed refreshes)`.
+  - A 401 on a row that can't re-auth, although re-auth is configured, says why, e.g. `"(re-auth not possible: empty 'oAuthKey')"`.
+  - `expires_col` values that are numeric strings now trigger the proactive refresh. Before, only `int`/`float` did.
 
 ## [0.4.0] - 2026-10-17
 ### Added
