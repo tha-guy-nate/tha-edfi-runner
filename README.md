@@ -237,7 +237,8 @@ runner.batch_post_payload(
 - `retry_messages`: optional case-insensitive substrings. When set, a listed code
   is retried only if the Ed-Fi message contains one of them, so a payload error
   like `"... is required"` fails right away instead of being retried.
-- `retry_statuses`: HTTP codes to re-POST on. After `max_retries` the result
+- `retry_statuses`: HTTP codes to re-POST on. `401` isn't allowed here; use
+  re-auth (below) instead. After `max_retries` the result
   is final. Success gives `status=None, message=None`; anything else gives
   `"error"`, with the correlation id and retries attempted in the message, e.g.
   `"400 Client Error: ... (correlation id: <id>; retries attempted: 2)"`.

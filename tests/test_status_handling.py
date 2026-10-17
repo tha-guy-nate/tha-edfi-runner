@@ -207,12 +207,11 @@ def test_batch_post_payload_failed_retry_is_error_with_correlation_id():
     assert result[0]["row_index"] == 0
 
 
-def test_batch_post_payload_reauths_on_allowed_401():
+def test_allowed_401_does_not_reauth():
     runner = make_runner()
     row = {**_row(), "key": "k", "secret": "s"}
-    responses = [_err(401), _ok()]
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", side_effect=responses),
+        patch("tha_edfi_runner.base.ThaReq.safe_call", return_value=_err(401)) as call,
         patch(
             "tha_edfi_runner.resources.student_assessment.runner._refetch_token",
             return_value="fresh",
@@ -228,8 +227,19 @@ def test_batch_post_payload_reauths_on_allowed_401():
             oauth_endpoint="oauth/token",
             allow_statuses={401: "warning"},
         )
-    refetch.assert_called_once()
-    assert result[0]["status"] is None
+    refetch.assert_not_called()
+    assert call.call_count == 1
+    assert result[0]["status"] == "warning"
+
+
+def test_401_in_retry_statuses_raises():
+    runner = make_runner()
+    with pytest.raises(EdfiError, match="401"):
+        runner.post_payload({"id": "1"}, key="dist-1", retry_statuses={400, 401})
+    with pytest.raises(EdfiError, match="401"):
+        runner.batch_post_payload(
+            [_row()], payload_col="payload", key_col="District BK", retry_statuses={401}
+        )
 
 
 def test_batch_post_payload_early_error_has_correlation_key():

@@ -17,9 +17,6 @@ _CORRELATION_HEADERS = ("correlation-id", "x-correlation-id")
 
 
 def _is_401(result: dict[str, Any]) -> bool:
-    # http_status also catches a 401 mapped through allow_statuses.
-    if result.get("http_status") == 401:
-        return True
     return result.get("status") == "error" and "401" in str(result.get("message", ""))
 
 
@@ -39,7 +36,11 @@ def _correlation_id(result: dict[str, Any]) -> str | None:
     return None
 
 
-def _validate_status_handling(max_retries: int, retry_backoff: float) -> None:
+def _validate_status_handling(
+    retry_statuses: Collection[int] | None, max_retries: int, retry_backoff: float
+) -> None:
+    if retry_statuses and 401 in retry_statuses:
+        raise EdfiError("401 can't be retried; pass auth_key_col/auth_secret_col to re-auth")
     if max_retries < 0:
         raise EdfiError(f"max_retries must be >= 0, got {max_retries}")
     if retry_backoff < 0:
@@ -148,7 +149,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         payload may be a dict or a JSON string.
         # TODO: support additional payload types (form data, raw bytes)
         """
-        _validate_status_handling(max_retries, retry_backoff)
+        _validate_status_handling(retry_statuses, max_retries, retry_backoff)
         if not commit:
             return {
                 "key": key,
@@ -259,7 +260,7 @@ class ThaStudentAssessment(ThaEdfiBase):
 
         Retry/allow options and ``correlation_id``: see ``post_payload``.
         """
-        _validate_status_handling(max_retries, retry_backoff)
+        _validate_status_handling(retry_statuses, max_retries, retry_backoff)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
