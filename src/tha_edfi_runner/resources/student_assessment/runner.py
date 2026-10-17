@@ -180,8 +180,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 bearer_token=tok,
                 api_version=api_version,
                 backend=self.backend,
+                req=req,
             )
-            instance._req = req
             return call(instance)
 
         from_cache = False

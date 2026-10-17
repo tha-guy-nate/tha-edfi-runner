@@ -62,6 +62,7 @@ class _Client:
     failures: int = 0
     last_error: str = "token fetch failed"
     paused_until: float = 0.0  # time.monotonic()
+    pauses: int = 0  # pauses in a row; >1 means the attempt after a pause failed too
 
     def fresh(self) -> str | None:
         if self.token is None:
@@ -75,6 +76,7 @@ class _Client:
         self.last_error = reason
         if self.failures >= _MAX_REFRESH_FAILURES:
             self.paused_until = time.monotonic() + _REFRESH_COOLDOWN
+            self.pauses += 1
 
 
 class TokenCache:
@@ -83,9 +85,12 @@ class TokenCache:
     Keyed by ``(base_url, client_id)``. A per-client lock makes a refresh single-flight:
     a worker that waited on the lock re-checks the cache and reuses another worker's
     token. Consecutive failures back off (1s, 2s); at the cap, refreshes for that client
-    pause for ``_REFRESH_COOLDOWN`` seconds, then one attempt is allowed again. The count
-    resets only when the ODS accepts a refreshed token (``confirm``), so credentials that
-    get tokens the ODS rejects still hit the cap.
+    pause for ``_REFRESH_COOLDOWN`` seconds, then one attempt is allowed again. During
+    the first pause, rows wait it out (outside the lock) instead of failing, so a short
+    throttle delays the batch without losing rows; if the attempt after that pause fails
+    too, later pauses fail rows fast. The count resets only when the ODS accepts a
+    refreshed token (``confirm``), so credentials that get tokens the ODS rejects still
+    hit the cap.
     """
 
     def __init__(self, *, oauth_endpoint: str, backend: Backend) -> None:
@@ -128,7 +133,7 @@ class TokenCache:
         client = self._client(base_url, client_id)
         with client.lock:
             if client.token == token:
-                client.failures, client.paused_until = 0, 0.0
+                client.failures, client.paused_until, client.pauses = 0, 0.0, 0
 
     def refresh(
         self, base_url: str, client_id: str, secret: str, *, stale_token: str
@@ -139,21 +144,34 @@ class TokenCache:
         differs from it was refreshed by another worker and is returned without a fetch.
         """
         client = self._client(base_url, client_id)
-        with client.lock:
-            cached = client.fresh()
-            if cached is not None and cached != stale_token and cached not in client.rejected:
-                return cached, None
-            wait = client.paused_until - time.monotonic()
-            if wait > 0:
-                return None, (
-                    f"{client.last_error} (refresh paused {math.ceil(wait)}s after "
-                    f"{client.failures} failed refreshes)"
-                )
-            if 0 < client.failures < _MAX_REFRESH_FAILURES:
-                time.sleep(_REFRESH_BACKOFF * 2 ** (client.failures - 1))
-            got = fetch_token(base_url, client_id, secret, self._oauth_endpoint, self._backend)
-            if got.token is None:
-                client.fail(got.error or "token fetch failed")
-                return None, client.last_error
-            client.token, client.expires_at = got.token, got.expires_at
-            return got.token, None
+        waited = False
+        while True:
+            with client.lock:
+                cached = client.fresh()
+                if cached is not None and cached != stale_token and cached not in client.rejected:
+                    return cached, None
+                wait = client.paused_until - time.monotonic()
+                if wait <= 0:
+                    return self._attempt(client, base_url, client_id, secret)
+                if waited or client.pauses > 1:
+                    return None, (
+                        f"{client.last_error} (refresh paused {math.ceil(wait)}s after "
+                        f"{client.failures} failed refreshes)"
+                    )
+            # First pause: wait it out without holding the lock, then re-check (another
+            # worker may have refreshed by then, or this worker makes the next attempt).
+            time.sleep(wait)
+            waited = True
+
+    def _attempt(
+        self, client: _Client, base_url: str, client_id: str, secret: str
+    ) -> tuple[str | None, str | None]:
+        """One token request, with back-off. Called with ``client.lock`` held."""
+        if 0 < client.failures < _MAX_REFRESH_FAILURES:
+            time.sleep(_REFRESH_BACKOFF * 2 ** (client.failures - 1))
+        got = fetch_token(base_url, client_id, secret, self._oauth_endpoint, self._backend)
+        if got.token is None:
+            client.fail(got.error or "token fetch failed")
+            return None, client.last_error
+        client.token, client.expires_at = got.token, got.expires_at
+        return got.token, None

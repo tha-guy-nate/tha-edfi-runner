@@ -146,6 +146,7 @@ ThaEdfiBase(
     token_url=None,
     bearer_token=None,
     backend="requests",   # or "httpx2"
+    req=None,             # share an existing ThaReq (and its sessions); its backend wins
 )
 ```
 
@@ -332,12 +333,21 @@ Refresh failures show up in the row message:
   `oauth_endpoint` isn't set).
 
 Failed refreshes for a client back off (1s, then 2s). After 3 failures in a row,
-refreshes for that client pause for 30 seconds, and its rows fail fast with
-`(refresh paused <n>s after 3 failed refreshes)` instead of hitting the token endpoint
-once per row. After the pause, the next row tries one refresh again; if it works, the
-batch carries on with the new token. A refreshed token that Ed-Fi rejects with a 401
-counts as a failed refresh, so credentials that get unusable tokens hit the same limit.
-The count resets once Ed-Fi accepts a refreshed token.
+refreshes for that client pause for 30 seconds:
+
+- **First pause:** rows wait it out instead of failing, then one refresh is tried. If it
+  works, the batch carries on with the new token, so a short throttle delays the batch
+  without losing rows.
+- **If that refresh fails too**, the problem isn't a short throttle. From then on, rows
+  for that client fail fast during each pause with
+  `(refresh paused <n>s after <n> failed refreshes)`, and one refresh is tried after
+  each pause. Rerun those rows once the token endpoint or credentials are fixed.
+
+A refreshed token that Ed-Fi rejects with a 401 counts as a failed refresh, so
+credentials that get unusable tokens hit the same limit. The count resets once Ed-Fi
+accepts a refreshed token. A 401 that isn't about expiry (Ed-Fi refusing the client's
+tokens) therefore costs one token request per pause before rows fail fast. Ed-Fi
+normally answers a missing permission with 403, which doesn't trigger re-auth.
 
 The refreshed token lives only inside that batch call. The `token_col` values in your
 rows aren't updated, so if you keep tokens elsewhere, fetch a new one for the next run

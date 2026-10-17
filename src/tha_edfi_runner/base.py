@@ -4,6 +4,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from tha_req_runner.runner import ThaReq
 from tqdm import tqdm
 
 from tha_edfi_runner._backend import Backend, make_req
@@ -73,6 +74,9 @@ class ThaEdfiBase:
         password: str | None = None,
         # HTTP backend: "requests" (default) or "httpx2" (needs the [httpx2] extra)
         backend: Backend = "requests",
+        # Share an existing ThaReq (and its per-thread sessions) instead of a new one;
+        # its own backend is used.
+        req: ThaReq | None = None,
     ) -> None:
         self.backend: Backend = backend
         self.base_url = base_url.rstrip("/")
@@ -83,7 +87,7 @@ class ThaEdfiBase:
         self._data_url = (
             f"{self.base_url}/data/{self.api_version}" if self.api_version else self.base_url
         )
-        self._req = make_req(backend)
+        self._req = req if req is not None else make_req(backend)
         self._auth: OAuth2Auth | BearerAuth | None = None
 
         if bearer_token is not None:

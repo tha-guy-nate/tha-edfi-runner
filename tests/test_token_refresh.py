@@ -2,6 +2,7 @@
 
 import threading
 import time
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -181,104 +182,116 @@ def test_failed_proactive_refresh_skips_the_request():
     assert server.tokens_used == []
 
 
-def test_throttled_token_endpoint_pauses_after_cap():
-    server = FakeServer(valid=set())
-    with (
-        patch(PATCH_RUNNER, side_effect=server),
-        patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")) as fetch,
-        patch(PATCH_SLEEP) as sleep,
-    ):
-        results = _post([_row() for _ in range(10)])
-    assert fetch.call_count == 3
-    assert [c.args[0] for c in sleep.call_args_list] == [1.0, 2.0]
-    assert results[0]["message"] == "auth error: HTTP 401; auth refresh failed: HTTP 429"
-    assert results[1]["message"] == "auth refresh failed: HTTP 429"
-    assert results[-1]["message"] == (
-        "auth refresh failed: HTTP 429 (refresh paused 30s after 3 failed refreshes)"
-    )
-    # Only the first row sends the stale token; later rows know it was rejected.
-    assert server.tokens_used == ["old"]
+class FakeClock:
+    """Monotonic time that only moves when the code sleeps."""
 
-
-class Clock:
     def __init__(self):
         self.now = 1000.0
+        self.sleeps = []
+        self.on_sleep = None
 
-    def __call__(self):
+    def monotonic(self):
         return self.now
 
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+        if self.on_sleep is not None:
+            self.on_sleep()
 
-def _paused_cache(clock):
+
+@contextmanager
+def fake_time():
+    clock = FakeClock()
+    with (
+        patch("tha_edfi_runner._token_cache.time.monotonic", clock.monotonic),
+        patch(PATCH_SLEEP, clock.sleep),
+    ):
+        yield clock
+
+
+def _paused_cache():
+    """A cache whose client just hit the cap (3 failures, first pause started)."""
     cache = TokenCache(oauth_endpoint=OAUTH_EP, backend="requests")
-    with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")), patch(PATCH_SLEEP):
+    with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")):
         for _ in range(3):
             cache.refresh(BASE_URL, "c", "s", stale_token="old")
     return cache
 
 
-def test_refresh_resumes_after_cooldown_and_success_resets():
-    clock = Clock()
-    with patch("tha_edfi_runner._token_cache.time.monotonic", clock):
-        cache = _paused_cache(clock)
+def test_rows_wait_out_the_first_pause_and_the_batch_recovers():
+    server = FakeServer(valid={"new"})
+    fetches = [TokenFetch(None, None, "HTTP 429")] * 3 + [TokenFetch("new", None, None)]
+    with (
+        fake_time() as clock,
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, side_effect=fetches) as fetch,
+    ):
+        results = _post([_row() for _ in range(10)])
+    assert fetch.call_count == 4
+    assert clock.sleeps == [1.0, 2.0, 30.0]
+    assert results[0]["message"] == "auth error: HTTP 401; auth refresh failed: HTTP 429"
+    assert [r["message"] for r in results[1:3]] == ["auth refresh failed: HTTP 429"] * 2
+    # The row that hit the pause waited instead of failing; no rows lost after that.
+    assert [r["status"] for r in results[3:]] == [None] * 7
+    assert server.tokens_used == ["old"] + ["new"] * 7
+
+
+def test_persistent_failure_waits_once_then_fails_fast():
+    server = FakeServer(valid=set())
+    with (
+        fake_time() as clock,
+        patch(PATCH_RUNNER, side_effect=server),
+        patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")) as fetch,
+    ):
+        results = _post([_row() for _ in range(10)])
+    assert fetch.call_count == 4  # 3 + one attempt after the pause
+    assert clock.sleeps == [1.0, 2.0, 30.0]  # only the first pause is waited out
+    assert results[3]["message"] == "auth refresh failed: HTTP 429"
+    assert results[-1]["message"] == (
+        "auth refresh failed: HTTP 429 (refresh paused 30s after 4 failed refreshes)"
+    )
+    assert server.tokens_used == ["old"]  # later rows never resend the rejected token
+
+
+def test_waiting_row_uses_a_token_another_worker_got():
+    with fake_time() as clock:
+        cache = _paused_cache()
+        client = cache._clients[(BASE_URL, "c")]
+
+        def other_worker_refreshes():
+            client.token, client.expires_at = "t-other", None
+
+        clock.on_sleep = other_worker_refreshes
         with patch(PATCH_FETCH) as fetch:
-            _, reason = cache.refresh(BASE_URL, "c", "s", stale_token="old")
-            fetch.assert_not_called()
-        assert reason.endswith("(refresh paused 30s after 3 failed refreshes)")
+            assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == ("t-other", None)
+        fetch.assert_not_called()
 
-        clock.now += 31
-        with (
-            patch(PATCH_FETCH, return_value=TokenFetch("t1", None, None)) as fetch,
-            patch(PATCH_SLEEP) as sleep,
-        ):
+
+def test_attempt_after_pause_and_confirm_reset_the_count():
+    with fake_time() as clock:
+        cache = _paused_cache()
+        with patch(PATCH_FETCH, return_value=TokenFetch("t1", None, None)) as fetch:
             assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == ("t1", None)
-        sleep.assert_not_called()  # the probe after a cool-down doesn't back off again
         assert fetch.call_count == 1
-        cache.confirm(BASE_URL, "c", "t1")  # the ODS accepted it
-
-        with (
-            patch(PATCH_FETCH, return_value=TokenFetch(None, None, "x")),
-            patch(PATCH_SLEEP) as sleep,
-        ):
+        assert clock.sleeps == [1.0, 2.0, 30.0]  # waited the pause; no extra back-off
+        cache.confirm(BASE_URL, "c", "t1")
+        with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "x")):
             assert cache.refresh(BASE_URL, "c", "s", stale_token="t1") == (None, "x")
-        sleep.assert_not_called()  # count was reset: first failure has no back-off
+        assert clock.sleeps == [1.0, 2.0, 30.0]  # count reset: no back-off before it
+        assert cache._clients[(BASE_URL, "c")].pauses == 0
 
 
-def test_failed_probe_pauses_again():
-    clock = Clock()
-    with patch("tha_edfi_runner._token_cache.time.monotonic", clock):
-        cache = _paused_cache(clock)
+def test_failed_attempt_after_pause_fails_fast_from_then_on():
+    with fake_time() as clock:
+        cache = _paused_cache()
         clock.now += 31
         with patch(PATCH_FETCH, return_value=TokenFetch(None, None, "HTTP 429")) as fetch:
             assert cache.refresh(BASE_URL, "c", "s", stale_token="old") == (None, "HTTP 429")
             _, reason = cache.refresh(BASE_URL, "c", "s", stale_token="old")
         assert fetch.call_count == 1
+        assert clock.sleeps == [1.0, 2.0]  # no wait on the second pause
         assert reason == "HTTP 429 (refresh paused 30s after 4 failed refreshes)"
-
-
-def test_batch_recovers_mid_run_once_cooldown_ends():
-    class SteppingClock:
-        """Each call is 11s later, so the 30s pause ends a few rows after it starts."""
-
-        def __init__(self):
-            self.now = 1000.0
-
-        def __call__(self):
-            self.now += 11
-            return self.now
-
-    server = FakeServer(valid={"new"})
-    fetches = [TokenFetch(None, None, "HTTP 429")] * 3 + [TokenFetch("new", None, None)]
-    with (
-        patch("tha_edfi_runner._token_cache.time.monotonic", SteppingClock()),
-        patch(PATCH_RUNNER, side_effect=server),
-        patch(PATCH_FETCH, side_effect=fetches) as fetch,
-        patch(PATCH_SLEEP),
-    ):
-        results = _post([_row() for _ in range(10)])
-    assert fetch.call_count == 4
-    assert [r["status"] for r in results] == ["error"] * 5 + [None] * 5
-    assert "refresh paused" in results[4]["message"]
-    assert server.tokens_used == ["old"] + ["new"] * 5
 
 
 def test_rejected_refreshed_token_counts_as_failure():

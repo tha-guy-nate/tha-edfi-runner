@@ -233,18 +233,17 @@ def test_every_batch_method_shares_and_closes_its_req(method, kwargs):
     rows = [{**_row(), "District BK": f"d{n}"} for n in range(3)]
     instances = []
 
-    def make(**_kw):
-        inst = MagicMock()
-        instances.append(inst)
-        return inst
+    def make(**kw):
+        instances.append(kw)
+        return MagicMock()
 
     with (
         patch(PATCH_RUNNER, side_effect=make),
         patch.object(BatchReq, "close_all", autospec=True) as close_all,
     ):
         getattr(runner, method)(rows, **kwargs)
-    assert len({id(i._req) for i in instances}) == 1
-    assert isinstance(instances[0]._req, BatchReq)
+    assert len({id(kw["req"]) for kw in instances}) == 1
+    assert isinstance(instances[0]["req"], BatchReq)
     close_all.assert_called_once()
 
 
@@ -275,3 +274,13 @@ def test_nonstandard_status_code_has_no_reason_phrase():
     err = {"status": "error", "code": 599, "data": None, "message": "x"}
     with patch.object(runner._req, "safe_call", return_value=err):
         assert runner.post_payload({"id": "1"}, key="k", commit=True)["message"] == "HTTP 599"
+
+
+def test_req_keyword_shares_a_thareq():
+    from tha_edfi_runner._backend import make_req
+
+    shared = make_req("requests")
+    a = ThaEdfiBase(base_url=BASE_URL, bearer_token=TOKEN, req=shared)
+    b = ThaStudentAssessment(base_url=BASE_URL, bearer_token=TOKEN, req=shared)
+    assert a._req is shared and b._req is shared
+    assert a._session() is b._session()
