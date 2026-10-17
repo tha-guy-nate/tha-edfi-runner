@@ -328,18 +328,15 @@ def test_get_all_error_carries_correlation_id_into_batch_placeholder():
     ]
 
 
-def test_real_edfi_validation_400_body():
-    # Shape of an actual Ed-Fi ODS 400 on studentAssessments.
+def test_multiline_validation_400_body():
+    # Ed-Fi validation messages are tab-indented lines with trailing newlines.
     body = {
         "message": (
-            "Validation of 'StudentAssessment' failed.\n"
-            "\tValidation of 'StudentAssessmentStudentObjectiveAssessments' failed.\n"
-            "\tStudentAssessmentStudentObjectiveAssessment[0]: Validation of "
-            "'StudentAssessmentStudentObjectiveAssessmentScoreResults' failed.\n"
-            "\tStudentAssessmentStudentObjectiveAssessmentScoreResult[0]: "
-            "ResultDatatypeTypeDescriptorId is required.\n\n\n"
+            "Validation of 'Widget' failed.\n"
+            "\tValidation of 'WidgetParts' failed.\n"
+            "\tWidgetPart[0]: SampleDescriptorId is required.\n\n\n"
         ),
-        "correlationId": "000095f5-e69d-4264-b1c5-ee2397db0f1e",
+        "correlationId": CID,
     }
     runner = make_runner()
     with patch.object(runner._req, "safe_call", return_value=_err(400, data=body)):
@@ -348,15 +345,15 @@ def test_real_edfi_validation_400_body():
         )
     assert result["status"] == "warning"
     assert result["http_status"] == 400
-    assert result["correlation_id"] == "000095f5-e69d-4264-b1c5-ee2397db0f1e"
-    assert result["message"].startswith("400 Client Error: Validation of 'StudentAssessment'")
-    assert result["message"].endswith("ResultDatatypeTypeDescriptorId is required.")
+    assert result["correlation_id"] == CID
+    assert result["message"].startswith("400 Client Error: Validation of 'Widget' failed.")
+    assert result["message"].endswith("SampleDescriptorId is required.")
 
 
 # --- retry_messages ---
 
 _TRANSIENT = {"message": "Unable to resolve value 'X' to an existing 'Student' resource."}
-_PERMANENT = {"message": "ResultDatatypeTypeDescriptorId is required."}
+_PERMANENT = {"message": "SampleDescriptorId is required."}
 
 
 def test_retry_messages_retries_only_matching_message():
