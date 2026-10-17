@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, cast
 
@@ -9,11 +10,40 @@ from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
 from tha_edfi_runner.base import ThaEdfiBase, _compose_label
+from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment import api
+
+_CORRELATION_HEADERS = ("correlation-id", "x-correlation-id")
 
 
 def _is_401(result: dict[str, Any]) -> bool:
+    # http_status also catches a 401 mapped through allow_statuses.
+    if result.get("http_status") == 401:
+        return True
     return result.get("status") == "error" and "401" in str(result.get("message", ""))
+
+
+def _correlation_id(result: dict[str, Any]) -> str | None:
+    """Ed-Fi ``correlationId`` from the error body, else a correlation-id header."""
+    data = result.get("data")
+    if isinstance(data, dict):
+        cid = data.get("correlationId")
+        if cid:
+            return str(cid)
+    headers = getattr(result.get("raw_response"), "headers", None)
+    if headers is not None:
+        for name in _CORRELATION_HEADERS:
+            value = headers.get(name)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _validate_status_handling(max_retries: int, retry_backoff: float) -> None:
+    if max_retries < 0:
+        raise EdfiError(f"max_retries must be >= 0, got {max_retries}")
+    if retry_backoff < 0:
+        raise EdfiError(f"retry_backoff must be >= 0, got {retry_backoff}")
 
 
 def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str | None) -> str | None:
@@ -31,6 +61,32 @@ def _error_msg(result: dict[str, Any]) -> str:
     if result.get("code") == 401:
         return "auth error: HTTP 401"
     return result.get("message") or f"HTTP {result.get('code')}"
+
+
+def _post_error_msg(result: dict[str, Any]) -> str:
+    msg = _error_msg(result)
+    data = result.get("data")
+    if result.get("code") != 401 and isinstance(data, dict):
+        detail = data.get("message") or data.get("error") or data.get("detail") or ""
+        detail = detail.strip() if isinstance(detail, str) else detail
+        if detail:
+            msg = f"{msg}: {detail}"
+    return msg
+
+
+def _should_retry(
+    result: dict[str, Any],
+    retry_statuses: Collection[int] | None,
+    retry_messages: Collection[str] | None,
+) -> bool:
+    if result["status"] != "error" or not retry_statuses:
+        return False
+    if result.get("code") not in retry_statuses:
+        return False
+    if not retry_messages:
+        return True
+    msg = _post_error_msg(result).lower()
+    return any(m.lower() in msg for m in retry_messages)
 
 
 def _kept_rows_with_indices(
@@ -71,39 +127,92 @@ class ThaStudentAssessment(ThaEdfiBase):
         key: str,
         endpoint: str = ep.STUDENT_ASSESSMENTS,
         commit: bool = False,
+        retry_statuses: Collection[int] | None = None,
+        retry_messages: Collection[str] | None = None,
+        max_retries: int = 2,
+        retry_backoff: float = 1.0,
+        allow_statuses: Mapping[int, str | None] | None = None,
     ) -> dict[str, Any]:
-        """POST a single payload to Ed-Fi. Returns {"key", "status", "message", "http_status"}.
+        """POST a single payload to Ed-Fi.
 
-        ``http_status`` is the HTTP status code of the Ed-Fi response (e.g. 201, 409,
-        401), or ``None`` for client-side failures (dry run, invalid JSON).
+        Returns {"key", "status", "message", "http_status", "correlation_id"}.
+        ``http_status`` is ``None`` for client-side failures; ``correlation_id`` is set
+        only on an Ed-Fi error.
+
+        Opt-in: ``retry_statuses`` re-POSTs on those codes (up to ``max_retries``,
+        exponential ``retry_backoff``), narrowed by ``retry_messages`` (case-insensitive
+        substrings the Ed-Fi message must contain). A failed retry is ``"error"``.
+        ``allow_statuses`` maps a code that wasn't retried to the row status used
+        instead of ``"error"``, e.g. ``{400: "warning"}``.
 
         payload may be a dict or a JSON string.
         # TODO: support additional payload types (form data, raw bytes)
         """
+        _validate_status_handling(max_retries, retry_backoff)
         if not commit:
-            return {"key": key, "status": "dry_run", "message": None, "http_status": None}
+            return {
+                "key": key,
+                "status": "dry_run",
+                "message": None,
+                "http_status": None,
+                "correlation_id": None,
+            }
         parsed_payload: dict[str, Any]
         if isinstance(payload, str):
             try:
                 parsed_payload = json.loads(payload)
             except (json.JSONDecodeError, TypeError) as exc:
-                msg = f"invalid JSON: {exc}"
-                return {"key": key, "status": "error", "message": msg, "http_status": None}
+                return {
+                    "key": key,
+                    "status": "error",
+                    "message": f"invalid JSON: {exc}",
+                    "http_status": None,
+                    "correlation_id": None,
+                }
         else:
             parsed_payload = payload
         session = self._session()
-        result = api.post_student_assessment(
-            self._req, session, self._data_url, endpoint, parsed_payload
-        )
+        retries = 0
+        while True:
+            result = api.post_student_assessment(
+                self._req, session, self._data_url, endpoint, parsed_payload
+            )
+            if retries >= max_retries or not _should_retry(result, retry_statuses, retry_messages):
+                break
+            time.sleep(retry_backoff * 2**retries)
+            retries += 1
         http_status = result.get("code")
         if result["status"] == "error":
-            msg = _error_msg(result)
-            if result.get("code") != 401 and isinstance(result.get("data"), dict):
-                detail = result["data"].get("message") or result["data"].get("error") or ""
-                if detail:
-                    msg = f"{msg}: {detail}"
-            return {"key": key, "status": "error", "message": msg, "http_status": http_status}
-        return {"key": key, "status": None, "message": None, "http_status": http_status}
+            msg = _post_error_msg(result)
+            correlation_id = _correlation_id(result)
+            if retry_statuses:
+                notes = [f"retries attempted: {retries}"]
+                if correlation_id:
+                    notes.insert(0, f"correlation id: {correlation_id}")
+                msg = f"{msg} ({'; '.join(notes)})"
+            status: str | None = "error"
+            # A retry-eligible failure stays "error"; allow_statuses covers the rest.
+            if (
+                not _should_retry(result, retry_statuses, retry_messages)
+                and allow_statuses is not None
+                and isinstance(http_status, int)
+                and http_status in allow_statuses
+            ):
+                status = allow_statuses[http_status]
+            return {
+                "key": key,
+                "status": status,
+                "message": msg,
+                "http_status": http_status,
+                "correlation_id": correlation_id,
+            }
+        return {
+            "key": key,
+            "status": None,
+            "message": None,
+            "http_status": http_status,
+            "correlation_id": None,
+        }
 
     def batch_post_payload(
         self,
@@ -127,6 +236,11 @@ class ThaStudentAssessment(ThaEdfiBase):
         expires_col: str | None = None,
         row_id_col: str | None = None,
         commit: bool = False,
+        retry_statuses: Collection[int] | None = None,
+        retry_messages: Collection[str] | None = None,
+        max_retries: int = 2,
+        retry_backoff: float = 1.0,
+        allow_statuses: Mapping[int, str | None] | None = None,
     ) -> list[dict[str, Any]]:
         """POST each row's payload to Ed-Fi using per-row credentials.
 
@@ -142,7 +256,10 @@ class ThaStudentAssessment(ThaEdfiBase):
         read) that survives the whole pipeline, independent of ``row_index`` and
         the business key. ``row_id`` is ``None`` on every result when ``row_id_col``
         is not set.
+
+        Retry/allow options and ``correlation_id``: see ``post_payload``.
         """
+        _validate_status_handling(max_retries, retry_backoff)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
@@ -154,6 +271,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                     "status": "dry_run",
                     "message": None,
                     "http_status": None,
+                    "correlation_id": None,
                     "row_index": orig_indices[pos],
                     "row_id": row_ids[pos] if row_ids is not None else None,
                 }
@@ -206,7 +324,16 @@ class ThaStudentAssessment(ThaEdfiBase):
             instance = ThaStudentAssessment(
                 base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
             )
-            result = instance.post_payload(payload, key=key_val, endpoint=endpoint, commit=True)
+            status_handling: dict[str, Any] = {
+                "retry_statuses": retry_statuses,
+                "retry_messages": retry_messages,
+                "max_retries": max_retries,
+                "retry_backoff": retry_backoff,
+                "allow_statuses": allow_statuses,
+            }
+            result = instance.post_payload(
+                payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
+            )
 
             if can_reauth and _is_401(result):
                 fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
@@ -215,7 +342,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                         base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
                     )
                     result = instance.post_payload(
-                        payload, key=key_val, endpoint=endpoint, commit=True
+                        payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
                     )
 
             return idx, result
@@ -237,6 +364,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 res["row_index"] = orig_indices[idx]
                 res["row_id"] = row_ids[idx] if row_ids is not None else None
                 res.setdefault("http_status", None)
+                res.setdefault("correlation_id", None)
                 results[idx] = res
 
         self.rows = results
@@ -264,6 +392,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 "message": "not found",
                 "data": None,
                 "http_status": http_status,
+                "correlation_id": _correlation_id(result),
             }
         if result["status"] == "error":
             return {
@@ -272,6 +401,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 "message": _error_msg(result),
                 "data": None,
                 "http_status": http_status,
+                "correlation_id": _correlation_id(result),
             }
         return {
             "id": resource_id,
@@ -279,6 +409,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             "message": None,
             "data": result["data"],
             "http_status": http_status,
+            "correlation_id": None,
         }
 
     def batch_get_by_id(
@@ -381,6 +512,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 res["row_index"] = orig_indices[idx]
                 res["row_id"] = row_ids[idx] if row_ids is not None else None
                 res.setdefault("http_status", None)
+                res.setdefault("correlation_id", None)
                 results[idx] = res
 
         self.rows = results
@@ -399,7 +531,7 @@ class ThaStudentAssessment(ThaEdfiBase):
     ) -> dict[str, Any]:
         """Fetch all student assessments for one account, auto-paginating.
 
-        Returns {"key": key, "status": None/"error", "message": ..., "data": [...]}.
+        Returns {"key", "status", "message", "data", "correlation_id"}.
         Use batch_get_all to fan out across many accounts with per-row credentials.
         """
         all_items: list[dict[str, Any]] = []
@@ -427,7 +559,13 @@ class ThaStudentAssessment(ThaEdfiBase):
                     msg = "auth error: HTTP 401"
                 else:
                     msg = f"GET {endpoint} failed: {result['message']} (code {result['code']})"
-                return {"key": key, "status": "error", "message": msg, "data": None}
+                return {
+                    "key": key,
+                    "status": "error",
+                    "message": msg,
+                    "data": None,
+                    "correlation_id": _correlation_id(result),
+                }
             page: list[dict[str, Any]] = result["data"] or []
             all_items.extend(page)
             if progress is not None:
@@ -440,7 +578,13 @@ class ThaStudentAssessment(ThaEdfiBase):
             progress.close()
 
         self.rows = all_items
-        return {"key": key, "status": None, "message": None, "data": all_items}
+        return {
+            "key": key,
+            "status": None,
+            "message": None,
+            "data": all_items,
+            "correlation_id": None,
+        }
 
     def batch_get_all(
         self,
@@ -547,7 +691,14 @@ class ThaStudentAssessment(ThaEdfiBase):
         for result in account_results:
             key_val = result.get("key", "")
             if result.get("status") == "error":
-                flat.append({key_col: key_val, "status": "error", "message": result.get("message")})
+                flat.append(
+                    {
+                        key_col: key_val,
+                        "status": "error",
+                        "message": result.get("message"),
+                        "correlation_id": result.get("correlation_id"),
+                    }
+                )
             else:
                 for record in result.get("data") or []:
                     record[key_col] = key_val
@@ -576,6 +727,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 "status": "dry_run",
                 "message": None,
                 "http_status": None,
+                "correlation_id": None,
             }
         session = self._session()
         result = api.delete_student_assessment(
@@ -590,6 +742,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 "status": "error",
                 "message": msg,
                 "http_status": http_status,
+                "correlation_id": _correlation_id(result),
             }
         return {
             "id": resource_id,
@@ -597,6 +750,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             "status": "deleted",
             "message": None,
             "http_status": http_status,
+            "correlation_id": None,
         }
 
     def batch_delete_by_id(
@@ -646,6 +800,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                     "status": "dry_run",
                     "message": None,
                     "http_status": None,
+                    "correlation_id": None,
                     "row_index": orig_indices[pos],
                     "row_id": row_ids[pos] if row_ids is not None else None,
                 }
@@ -720,6 +875,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 res["row_index"] = orig_indices[idx]
                 res["row_id"] = row_ids[idx] if row_ids is not None else None
                 res.setdefault("http_status", None)
+                res.setdefault("correlation_id", None)
                 results[idx] = res
 
         self.rows = results
