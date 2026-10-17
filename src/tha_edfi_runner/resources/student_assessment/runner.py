@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, cast
 
 from tqdm import tqdm
 
 from tha_edfi_runner import endpoints as ep
+from tha_edfi_runner._backend import BatchReq, make_batch_req
+from tha_edfi_runner._token_cache import DEFAULT_REFRESH_COOLDOWN, TokenCache, is_expired
+from tha_edfi_runner.auth import _http_status_text
 from tha_edfi_runner.base import ThaEdfiBase, _compose_label
 from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment import api
@@ -47,24 +50,46 @@ def _validate_status_handling(
         raise EdfiError(f"retry_backoff must be >= 0, got {retry_backoff}")
 
 
-def _refetch_token(base_url: str, key: str, secret: str, oauth_endpoint: str | None) -> str | None:
-    if not oauth_endpoint:
-        return None
-    token_url = f"{base_url}/{oauth_endpoint.lstrip('/')}"
-    instance = ThaEdfiBase(
-        base_url=base_url, client_id=key, client_secret=secret, token_url=token_url
+def _validate_cooldown(refresh_cooldown: float) -> None:
+    if not refresh_cooldown >= 0:  # also rejects NaN
+        raise EdfiError(f"refresh_cooldown must be >= 0, got {refresh_cooldown}")
+
+
+def _reauth_gap(
+    row: dict[str, Any],
+    auth_key_col: str | None,
+    auth_secret_col: str | None,
+    oauth_endpoint: str | None,
+) -> str | None:
+    """Why this row can't re-auth, ``""`` if re-auth isn't configured, ``None`` if it can."""
+    if not (auth_key_col or auth_secret_col or oauth_endpoint):
+        return ""
+    settings = (
+        ("auth_key_col", auth_key_col),
+        ("auth_secret_col", auth_secret_col),
+        ("oauth_endpoint", oauth_endpoint),
     )
-    result = instance.fetch_token()
-    return result["token"] if result["status"] is None else None
+    gaps = [f"{name} not set" for name, value in settings if not value]
+    for col in (auth_key_col, auth_secret_col):
+        if col and not str(row.get(col) or "").strip():
+            gaps.append(f"empty {col!r}")
+    return ", ".join(gaps) or None
 
 
 def _error_msg(result: dict[str, Any]) -> str:
-    if result.get("code") == 401:
+    """``"HTTP <code> <reason>"`` for an HTTP error, so the text doesn't depend on the backend.
+
+    Only a failure with no response (e.g. a connection error) keeps the library's text.
+    """
+    code = result.get("code")
+    if code == 401:
         return "auth error: HTTP 401"
-    return result.get("message") or f"HTTP {result.get('code')}"
+    if isinstance(code, int):
+        return _http_status_text(code)
+    return result.get("message") or "request failed"
 
 
-def _post_error_msg(result: dict[str, Any]) -> str:
+def _detailed_error_msg(result: dict[str, Any]) -> str:
     msg = _error_msg(result)
     data = result.get("data")
     if result.get("code") != 401 and isinstance(data, dict):
@@ -86,7 +111,7 @@ def _should_retry(
         return False
     if not retry_messages:
         return True
-    msg = _post_error_msg(result).lower()
+    msg = _detailed_error_msg(result).lower()
     return any(m.lower() in msg for m in retry_messages)
 
 
@@ -120,6 +145,82 @@ def _row_ids(rows: list[dict[str, Any]], col: str | None) -> list[str] | None:
 
 class ThaStudentAssessment(ThaEdfiBase):
     """Ed-Fi student assessment resource runner."""
+
+    def _token_cache(self, oauth_endpoint: str | None, cooldown: float) -> TokenCache | None:
+        if not oauth_endpoint:
+            return None
+        return TokenCache(oauth_endpoint=oauth_endpoint, backend=self.backend, cooldown=cooldown)
+
+    def _call_with_reauth(
+        self,
+        row: dict[str, Any],
+        *,
+        base_url: str,
+        token: str,
+        api_version: str,
+        auth_key_col: str | None,
+        auth_secret_col: str | None,
+        oauth_endpoint: str | None,
+        expires_col: str | None,
+        cache: TokenCache | None,
+        req: BatchReq,
+        call: Callable[[ThaStudentAssessment], dict[str, Any]],
+        error: Callable[[str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Run ``call`` for one batch row, refreshing the token through the batch's cache.
+
+        Proactive: a fresh cached token wins over the row's. A row token that expired
+        (``expires_col``) or already got a 401 is refreshed first, and if that fails the
+        row fails without sending the stale token.
+        Reactive: a 401 refreshes once (shared across workers) and repeats ``call``.
+        Every call goes through the batch's shared ``req`` (one session per worker).
+        """
+        gap = _reauth_gap(row, auth_key_col, auth_secret_col, oauth_endpoint)
+        client_id = str(row.get(auth_key_col) or "").strip() if auth_key_col else ""
+        secret = str(row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
+
+        def run(tok: str) -> dict[str, Any]:
+            instance = ThaStudentAssessment(
+                base_url=base_url,
+                bearer_token=tok,
+                api_version=api_version,
+                backend=self.backend,
+                req=req,
+            )
+            return call(instance)
+
+        from_cache = False
+        if gap is None and cache is not None:
+            cached = cache.current(base_url, client_id)
+            if cached is not None:
+                token, from_cache = cached, True
+            elif (expires_col and is_expired(row.get(expires_col))) or cache.is_rejected(
+                base_url, client_id, token
+            ):
+                fresh, reason = cache.refresh(base_url, client_id, secret, stale_token=token)
+                if fresh is None:
+                    return error(f"auth refresh failed: {reason}")
+                token, from_cache = fresh, True
+
+        result = run(token)
+        if not _is_401(result):
+            if from_cache and cache is not None:
+                cache.confirm(base_url, client_id, token)
+            return result
+        if gap is None and cache is not None:
+            cache.reject(base_url, client_id, token)
+            fresh, reason = cache.refresh(base_url, client_id, secret, stale_token=token)
+            if fresh is None:
+                return {**result, "message": f"{result['message']}; auth refresh failed: {reason}"}
+            result = run(fresh)
+            if _is_401(result):
+                cache.reject(base_url, client_id, fresh)
+            else:
+                cache.confirm(base_url, client_id, fresh)
+            return result
+        if gap:
+            return {**result, "message": f"{result['message']} (re-auth not possible: {gap})"}
+        return result
 
     def post_payload(
         self,
@@ -184,7 +285,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             retries += 1
         http_status = result.get("code")
         if result["status"] == "error":
-            msg = _post_error_msg(result)
+            msg = _detailed_error_msg(result)
             correlation_id = _correlation_id(result)
             if retry_statuses:
                 notes = [f"retries attempted: {retries}"]
@@ -235,6 +336,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
         commit: bool = False,
         retry_statuses: Collection[int] | None = None,
@@ -261,6 +363,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         Retry/allow options and ``correlation_id``: see ``post_payload``.
         """
         _validate_status_handling(retry_statuses, max_retries, retry_backoff)
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
@@ -282,6 +385,15 @@ class ThaStudentAssessment(ThaEdfiBase):
             return out
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
+        req = make_batch_req(self.backend)
+        status_handling: dict[str, Any] = {
+            "retry_statuses": retry_statuses,
+            "retry_messages": retry_messages,
+            "max_retries": max_retries,
+            "retry_backoff": retry_backoff,
+            "allow_statuses": allow_statuses,
+        }
 
         def _post(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             key_val = str(row.get(key_col) or "").strip()
@@ -308,65 +420,46 @@ class ThaStudentAssessment(ThaEdfiBase):
                 payload = raw
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
-            effective_api_version = row_api_version or self.api_version
-            auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
-            auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(
-                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            result = self._call_with_reauth(
+                row,
+                base_url=row_base_url,
+                token=row_token,
+                api_version=row_api_version or self.api_version,
+                auth_key_col=auth_key_col,
+                auth_secret_col=auth_secret_col,
+                oauth_endpoint=oauth_endpoint,
+                expires_col=expires_col,
+                cache=cache,
+                req=req,
+                call=lambda inst: inst.post_payload(
+                    payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
+                ),
+                error=lambda msg: {"key": key_val, "status": "error", "message": msg},
             )
-
-            if can_reauth and expires_col:
-                exp = row.get(expires_col)
-                if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                    if fresh:
-                        row_token = fresh
-
-            instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
-            )
-            status_handling: dict[str, Any] = {
-                "retry_statuses": retry_statuses,
-                "retry_messages": retry_messages,
-                "max_retries": max_retries,
-                "retry_backoff": retry_backoff,
-                "allow_statuses": allow_statuses,
-            }
-            result = instance.post_payload(
-                payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
-            )
-
-            if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                if fresh:
-                    instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
-                    )
-                    result = instance.post_payload(
-                        payload, key=key_val, endpoint=endpoint, commit=True, **status_handling
-                    )
-
             return idx, result
 
         _label = _compose_label(progress_desc, label, "posting payloads")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_post, idx, row): idx for idx, row in enumerate(valid_rows)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results
@@ -399,7 +492,7 @@ class ThaStudentAssessment(ThaEdfiBase):
             return {
                 "id": resource_id,
                 "status": "error",
-                "message": _error_msg(result),
+                "message": _detailed_error_msg(result),
                 "data": None,
                 "http_status": http_status,
                 "correlation_id": _correlation_id(result),
@@ -432,6 +525,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
     ) -> list[dict[str, Any]]:
         """GET each row's student assessment by ID using per-row credentials.
@@ -446,11 +540,14 @@ class ThaStudentAssessment(ThaEdfiBase):
         independent of ``row_index``. ``row_id`` is ``None`` on every result when
         ``row_id_col`` is not set.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
+        req = make_batch_req(self.backend)
 
         def _get(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -467,54 +564,49 @@ class ThaStudentAssessment(ThaEdfiBase):
                 return idx, {"id": resource_id, "status": "error", "message": msg, "data": None}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
-            effective_api_version = row_api_version or self.api_version
-            auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
-            auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(
-                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            result = self._call_with_reauth(
+                row,
+                base_url=row_base_url,
+                token=row_token,
+                api_version=row_api_version or self.api_version,
+                auth_key_col=auth_key_col,
+                auth_secret_col=auth_secret_col,
+                oauth_endpoint=oauth_endpoint,
+                expires_col=expires_col,
+                cache=cache,
+                req=req,
+                call=lambda inst: inst.get_by_id(resource_id, endpoint=endpoint),
+                error=lambda msg: {
+                    "id": resource_id,
+                    "status": "error",
+                    "message": msg,
+                    "data": None,
+                },
             )
-
-            if can_reauth and expires_col:
-                exp = row.get(expires_col)
-                if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                    if fresh:
-                        row_token = fresh
-
-            instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
-            )
-            result = instance.get_by_id(resource_id, endpoint=endpoint)
-
-            if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                if fresh:
-                    instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
-                    )
-                    result = instance.get_by_id(resource_id, endpoint=endpoint)
-
             return idx, result
 
         _label = _compose_label(progress_desc, label, "fetching by id")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_get, idx, row): idx for idx, row in enumerate(valid_rows)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results
@@ -559,7 +651,7 @@ class ThaStudentAssessment(ThaEdfiBase):
                 if result.get("code") == 401:
                     msg = "auth error: HTTP 401"
                 else:
-                    msg = f"GET {endpoint} failed: {result['message']} (code {result['code']})"
+                    msg = f"GET {endpoint} failed: {_error_msg(result)}"
                 return {
                     "key": key,
                     "status": "error",
@@ -608,6 +700,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
     ) -> list[dict[str, Any]]:
         """Fetch all student assessments across multiple accounts, returning a flat list.
 
@@ -615,6 +708,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         to expand_rows to join back to rows.
         Error accounts contribute a single {key_col, status, message} placeholder to the flat list.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows = [r for r in rows if r.get(status_col) not in effective_skip]
 
@@ -627,6 +721,8 @@ class ThaStudentAssessment(ThaEdfiBase):
                 deduped.append(row)
 
         account_results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(deduped))
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
+        req = make_batch_req(self.backend)
 
         def _fetch(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             key_val = str(row.get(key_col) or "").strip()
@@ -640,53 +736,43 @@ class ThaStudentAssessment(ThaEdfiBase):
                 return idx, {"key": key_val, "status": "error", "message": msg, "data": None}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
-            effective_api_version = row_api_version or self.api_version
-            auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
-            auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(
-                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            result = self._call_with_reauth(
+                row,
+                base_url=row_base_url,
+                token=row_token,
+                api_version=row_api_version or self.api_version,
+                auth_key_col=auth_key_col,
+                auth_secret_col=auth_secret_col,
+                oauth_endpoint=oauth_endpoint,
+                expires_col=expires_col,
+                cache=cache,
+                req=req,
+                call=lambda inst: inst.get_all(
+                    key=key_val, endpoint=endpoint, params=params, limit=limit
+                ),
+                error=lambda msg: {"key": key_val, "status": "error", "message": msg, "data": None},
             )
-
-            if can_reauth and expires_col:
-                exp = row.get(expires_col)
-                if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                    if fresh:
-                        row_token = fresh
-
-            instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
-            )
-            result = instance.get_all(key=key_val, endpoint=endpoint, params=params, limit=limit)
-
-            if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                if fresh:
-                    instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
-                    )
-                    result = instance.get_all(
-                        key=key_val, endpoint=endpoint, params=params, limit=limit
-                    )
-
             return idx, result
 
         _action = "fetching all student assessments"
         _label = _compose_label(progress_desc, label, _action)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_fetch, idx, row): idx for idx, row in enumerate(deduped)}
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, out = future.result()
-                account_results[idx] = out
+                for future in futures_iter:
+                    idx, out = future.result()
+                    account_results[idx] = out
+        finally:
+            req.close_all()
 
         flat: list[dict[str, Any]] = []
         for result in account_results:
@@ -736,7 +822,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         )
         http_status = result.get("code")
         if result["status"] == "error":
-            msg = result["message"] or f"HTTP {result['code']}"
+            msg = _detailed_error_msg(result)
             return {
                 "id": resource_id,
                 "key": key,
@@ -774,6 +860,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         auth_secret_col: str | None = None,
         oauth_endpoint: str | None = None,
         expires_col: str | None = None,
+        refresh_cooldown: float = DEFAULT_REFRESH_COOLDOWN,
         row_id_col: str | None = None,
         commit: bool = False,
     ) -> list[dict[str, Any]]:
@@ -789,6 +876,7 @@ class ThaStudentAssessment(ThaEdfiBase):
         independent of ``row_index``. ``row_id`` is ``None`` on every result when
         ``row_id_col`` is not set.
         """
+        _validate_cooldown(refresh_cooldown)
         effective_skip = skip_statuses if skip_statuses is not None else ["error", "warning"]
         valid_rows, orig_indices = _kept_rows_with_indices(rows, status_col, effective_skip)
         row_ids = _row_ids(valid_rows, row_id_col)
@@ -811,6 +899,8 @@ class ThaStudentAssessment(ThaEdfiBase):
             return out
 
         results: list[dict[str, Any]] = cast(list[dict[str, Any]], [{}] * len(valid_rows))
+        cache = self._token_cache(oauth_endpoint, refresh_cooldown)
+        req = make_batch_req(self.backend)
 
         def _delete(idx: int, row: dict[str, Any]) -> tuple[int, dict[str, Any]]:
             resource_id = str(row.get(id_col) or "").strip()
@@ -828,56 +918,53 @@ class ThaStudentAssessment(ThaEdfiBase):
                 return idx, {"id": resource_id, "key": key_val, "status": "error", "message": msg}
 
             row_api_version = (row.get(api_version_col) or "").strip() if api_version_col else ""
-            effective_api_version = row_api_version or self.api_version
-            auth_key = (row.get(auth_key_col) or "").strip() if auth_key_col else ""
-            auth_secret = (row.get(auth_secret_col) or "").strip() if auth_secret_col else ""
-            can_reauth = bool(
-                auth_key_col and auth_secret_col and oauth_endpoint and auth_key and auth_secret
+            result = self._call_with_reauth(
+                row,
+                base_url=row_base_url,
+                token=row_token,
+                api_version=row_api_version or self.api_version,
+                auth_key_col=auth_key_col,
+                auth_secret_col=auth_secret_col,
+                oauth_endpoint=oauth_endpoint,
+                expires_col=expires_col,
+                cache=cache,
+                req=req,
+                call=lambda inst: inst.delete_by_id(
+                    resource_id, key=key_val, endpoint=endpoint, commit=True
+                ),
+                error=lambda msg: {
+                    "id": resource_id,
+                    "key": key_val,
+                    "status": "error",
+                    "message": msg,
+                },
             )
-
-            if can_reauth and expires_col:
-                exp = row.get(expires_col)
-                if isinstance(exp, (int, float)) and time.time() >= exp:
-                    fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                    if fresh:
-                        row_token = fresh
-
-            instance = ThaStudentAssessment(
-                base_url=row_base_url, bearer_token=row_token, api_version=effective_api_version
-            )
-            result = instance.delete_by_id(resource_id, key=key_val, endpoint=endpoint, commit=True)
-
-            if can_reauth and _is_401(result):
-                fresh = _refetch_token(row_base_url, auth_key, auth_secret, oauth_endpoint)
-                if fresh:
-                    instance = ThaStudentAssessment(
-                        base_url=row_base_url, bearer_token=fresh, api_version=effective_api_version
-                    )
-                    result = instance.delete_by_id(
-                        resource_id, key=key_val, endpoint=endpoint, commit=True
-                    )
-
             return idx, result
 
         _label = _compose_label(progress_desc, label, "deleting by id")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)}
-            futures_iter = (
-                tqdm(
-                    as_completed(futures),
-                    total=len(futures),
-                    desc=_label,
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_delete, idx, row): idx for idx, row in enumerate(valid_rows)
+                }
+                futures_iter = (
+                    tqdm(
+                        as_completed(futures),
+                        total=len(futures),
+                        desc=_label,
+                    )
+                    if show_progress
+                    else as_completed(futures)
                 )
-                if show_progress
-                else as_completed(futures)
-            )
-            for future in futures_iter:
-                idx, res = cast(tuple[int, dict[str, Any]], future.result())
-                res["row_index"] = orig_indices[idx]
-                res["row_id"] = row_ids[idx] if row_ids is not None else None
-                res.setdefault("http_status", None)
-                res.setdefault("correlation_id", None)
-                results[idx] = res
+                for future in futures_iter:
+                    idx, res = cast(tuple[int, dict[str, Any]], future.result())
+                    res["row_index"] = orig_indices[idx]
+                    res["row_id"] = row_ids[idx] if row_ids is not None else None
+                    res.setdefault("http_status", None)
+                    res.setdefault("correlation_id", None)
+                    results[idx] = res
+        finally:
+            req.close_all()
 
         self.rows = results
         return results

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tha_edfi_runner._token_cache import TokenFetch
 from tha_edfi_runner.errors import EdfiError
 from tha_edfi_runner.resources.student_assessment.runner import (
     ThaStudentAssessment,
@@ -103,7 +104,7 @@ def test_retry_exhausted_message_lists_correlation_id_and_retries():
     assert result["status"] == "error"
     assert result["correlation_id"] == CID
     assert result["message"] == (
-        f"400 Client Error: bad (correlation id: {CID}; retries attempted: 1)"
+        f"HTTP 400 Bad Request: bad (correlation id: {CID}; retries attempted: 1)"
     )
 
 
@@ -189,7 +190,7 @@ def test_batch_post_payload_failed_retry_is_error_with_correlation_id():
     runner = make_runner()
     responses = [_err(400), _err(400, data={"correlationId": CID})]
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", side_effect=responses) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", side_effect=responses) as call,
         patch(PATCH_SLEEP),
     ):
         result = runner.batch_post_payload(
@@ -211,10 +212,10 @@ def test_allowed_401_does_not_reauth():
     runner = make_runner()
     row = {**_row(), "key": "k", "secret": "s"}
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", return_value=_err(401)) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", return_value=_err(401)) as call,
         patch(
-            "tha_edfi_runner.resources.student_assessment.runner._refetch_token",
-            return_value="fresh",
+            "tha_edfi_runner._token_cache.fetch_token",
+            return_value=TokenFetch("fresh", None, None),
         ) as refetch,
     ):
         result = runner.batch_post_payload(
@@ -266,7 +267,7 @@ def test_correlation_id_from_problem_details_body():
     with patch.object(runner._req, "safe_call", return_value=_err(400, data=body)):
         result = runner.post_payload({"id": "1"}, key="dist-1", commit=True)
     assert result["correlation_id"] == CID
-    assert result["message"] == "400 Client Error: Data validation failed."
+    assert result["message"] == "HTTP 400 Bad Request: Data validation failed."
 
 
 def test_correlation_id_from_header_fallback():
@@ -316,7 +317,7 @@ def test_delete_by_id_error_carries_correlation_id():
 def test_get_all_error_carries_correlation_id_into_batch_placeholder():
     runner = make_runner()
     err = _err(500, data={"correlationId": CID})
-    with patch("tha_edfi_runner.base.ThaReq.safe_call", return_value=err):
+    with patch("tha_req_runner.runner.ThaReq.safe_call", return_value=err):
         flat = runner.batch_get_all([_row()], key_col="District BK")
     assert flat == [
         {
@@ -346,7 +347,7 @@ def test_multiline_validation_400_body():
     assert result["status"] == "warning"
     assert result["http_status"] == 400
     assert result["correlation_id"] == CID
-    assert result["message"].startswith("400 Client Error: Validation of 'Widget' failed.")
+    assert result["message"].startswith("HTTP 400 Bad Request: Validation of 'Widget' failed.")
     assert result["message"].endswith("SampleDescriptorId is required.")
 
 
@@ -412,7 +413,7 @@ def test_batch_post_payload_passes_retry_messages():
     runner = make_runner()
     responses = [_err(400, data=_TRANSIENT), _ok()]
     with (
-        patch("tha_edfi_runner.base.ThaReq.safe_call", side_effect=responses) as call,
+        patch("tha_req_runner.runner.ThaReq.safe_call", side_effect=responses) as call,
         patch(PATCH_SLEEP),
     ):
         result = runner.batch_post_payload(

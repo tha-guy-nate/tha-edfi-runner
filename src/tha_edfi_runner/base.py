@@ -7,6 +7,7 @@ from typing import Any
 from tha_req_runner.runner import ThaReq
 from tqdm import tqdm
 
+from tha_edfi_runner._backend import Backend, make_req, resolve_backend
 from tha_edfi_runner.auth import BearerAuth, OAuth2Auth
 from tha_edfi_runner.errors import EdfiError
 
@@ -71,7 +72,15 @@ class ThaEdfiBase:
         # Basic auth (not yet implemented — placeholder)
         username: str | None = None,
         password: str | None = None,
+        # HTTP backend: "requests" or "httpx2" (needs the [httpx2] extra). None means
+        # the shared req's backend, or "requests" when there is no req.
+        backend: Backend | None = None,
+        # Share an existing ThaReq (and its per-thread sessions) instead of a new one.
+        # Passing a backend that differs from the req's raises EdfiError.
+        req: ThaReq | None = None,
     ) -> None:
+        backend = resolve_backend(backend, req)
+        self.backend: Backend = backend
         self.base_url = base_url.rstrip("/")
         # `api_version` is the URL spec segment (e.g. "v3"), not an ODS/API product
         # release. Normalise so a stored product version like "7.1" can't leak into
@@ -80,7 +89,7 @@ class ThaEdfiBase:
         self._data_url = (
             f"{self.base_url}/data/{self.api_version}" if self.api_version else self.base_url
         )
-        self._req = ThaReq()
+        self._req = req if req is not None else make_req(backend)
         self._auth: OAuth2Auth | BearerAuth | None = None
 
         if bearer_token is not None:
@@ -91,6 +100,7 @@ class ThaEdfiBase:
                 client_id=client_id,
                 client_secret=client_secret,
                 token_url=resolved_token_url,
+                backend=backend,
             )
         elif username is not None or password is not None:
             raise EdfiError(
@@ -200,6 +210,7 @@ class ThaEdfiBase:
                 client_id=key,
                 client_secret=secret,
                 token_url=token_url,
+                backend=self.backend,
             )
             result = instance.fetch_token()
             if result["status"] == "error":

@@ -13,6 +13,7 @@ A Tabular Helper API library that wraps the Ed-Fi ODS REST API with a typed, pip
 
 ```bash
 pip install tha-edfi-runner
+pip install "tha-edfi-runner[httpx2]"   # optional httpx2 HTTP backend
 ```
 
 ## Quick start
@@ -144,8 +145,18 @@ ThaEdfiBase(
     client_secret=None,
     token_url=None,
     bearer_token=None,
+    backend=None,         # "requests" (default) or "httpx2"
+    req=None,             # share an existing ThaReq (and its per-thread sessions)
 )
 ```
+
+`backend` picks the HTTP client used for every Ed-Fi and OAuth call, including the
+per-row instances the batch methods create. `"requests"` is the default. `"httpx2"`
+needs the `[httpx2]` extra and raises `ImportError` with the install command if it
+is missing. With `req=`, `backend` can be left out (the req's backend is used);
+passing a `backend` that differs from the req's raises `EdfiError`. Only the `requests` backend retries 5xx responses at the transport
+level, and only for GET/DELETE (never POST); the `httpx2` backend retries connection
+failures only.
 
 #### `base.fetch_token()`
 
@@ -241,7 +252,7 @@ runner.batch_post_payload(
   re-auth (below) instead. After `max_retries` the result
   is final. Success gives `status=None, message=None`; anything else gives
   `"error"`, with the correlation id and retries attempted in the message, e.g.
-  `"400 Client Error: ... (correlation id: <id>; retries attempted: 2)"`.
+  `"HTTP 400 Bad Request: <Ed-Fi detail> (correlation id: <id>; retries attempted: 2)"`.
 - `allow_statuses`: maps an HTTP code to the row status it gets in place of
   `"error"`. It applies only to errors that weren't retried; a retry that never
   succeeds always ends as `"error"`. The Ed-Fi detail and `correlation_id` stay
@@ -271,6 +282,7 @@ auth_key_col=None,              # enable reactive re-auth on 401
 auth_secret_col=None,
 oauth_endpoint=None,
 expires_col=None,               # enable proactive re-auth before token expiry
+refresh_cooldown=30.0,          # seconds refreshes pause after 3 failures; 0 = never pause
 row_id_col=None,                # column echoed onto each result as `row_id`
 ```
 
@@ -301,8 +313,53 @@ each result dict:
 
 Provide `auth_key_col`, `auth_secret_col`, and `oauth_endpoint` to enable automatic token refresh:
 
-- **Proactive**: if `expires_col` is set and the token has expired, a fresh token is fetched before the call
-- **Reactive**: if a call returns 401, the token is refreshed once and the call retried
+- **Proactive**: if `expires_col` is set and the token has expired, a fresh token is
+  fetched before the call. The expiry can be a number or a numeric string (e.g. after a
+  CSV round trip).
+- **Reactive**: if a call returns 401, the token is refreshed once and the call retried.
+
+A refreshed token is shared by every row and worker in the batch call, keyed by
+`(base_url, client id)`. One refresh serves the whole batch instead of one per row,
+and when several workers hit an expired token at once, only one token request is made.
+Rows after a refresh use the new token directly.
+
+Refresh failures show up in the row message:
+
+- `"auth refresh failed: <reason>"`: the row's token had expired or already got a 401
+  in this batch, and the refresh failed, so the call was not sent with that token.
+  These rows have `http_status=None`, like other failures that never reach Ed-Fi.
+- `"auth error: HTTP 401; auth refresh failed: <reason>"`: a 401 and the refresh after
+  it both failed.
+- `"auth error: HTTP 401 (re-auth not possible: empty 'oAuthKey')"`: re-auth is
+  configured, but this row is missing what it needs (or a setting like
+  `oauth_endpoint` isn't set).
+
+Failed refreshes for a client back off (1s, then 2s). After 3 failures in a row,
+refreshes for that client pause for `refresh_cooldown` seconds (30 by default):
+
+- **First pause:** rows wait it out instead of failing, then one refresh is tried. If it
+  works, the batch carries on with the new token, so a short throttle delays the batch
+  without losing rows.
+- **If that refresh fails too**, the problem isn't a short throttle. From then on, rows
+  for that client fail fast during each pause with
+  `(refresh paused <n>s after <n> failed refreshes)`, and one refresh is tried after
+  each pause. Rerun those rows once the token endpoint or credentials are fixed.
+- **`refresh_cooldown=0`** never pauses: every row after the third failure tries its own
+  refresh, so the batch keeps going without waiting but can hit the token endpoint once
+  per row while it's failing. A longer value waits longer before the next attempt.
+
+A refreshed token that Ed-Fi rejects with a 401 counts as a failed refresh, so
+credentials that get unusable tokens hit the same limit. The count resets once Ed-Fi
+accepts a refreshed token. A 401 that isn't about expiry (Ed-Fi refusing the client's
+tokens) therefore costs one token request per pause before rows fail fast. Ed-Fi
+normally answers a missing permission with 403, which doesn't trigger re-auth.
+
+The refreshed token lives only inside that batch call. The `token_col` values in your
+rows aren't updated, so if you keep tokens elsewhere, fetch a new one for the next run
+(e.g. with `batch_fetch_tokens`).
+
+Each batch call uses one HTTP session per worker thread, shared across rows, and closes
+them when the call returns.
 
 ## Alternatives
 
